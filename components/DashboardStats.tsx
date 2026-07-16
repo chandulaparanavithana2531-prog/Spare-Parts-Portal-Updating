@@ -143,7 +143,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({ parts, onFilterC
                 }, [factoryData])}
                 margin={{ top: 0, right: 80, left: 40, bottom: 0 }}
                 barSize={32}
-                onClick={(data) => {
+                onClick={(data: any) => {
                   if (data && data.activePayload && data.activePayload.length > 0) {
                     onFilterChange('factory', data.activePayload[0].payload.name);
                   }
