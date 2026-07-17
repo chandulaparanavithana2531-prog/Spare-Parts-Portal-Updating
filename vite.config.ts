@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
-    base: '/Spare-Parts-Portal-Updating/', // <--- ADD THIS LINE HERE
+    base: '/', // Changed from subfolder to root for Vercel
     server: {
       port: 5173,
       host: '0.0.0.0',
