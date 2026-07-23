@@ -624,15 +624,16 @@ app.post(['/send-email', '/api/send-email'], async (req, res) => {
         console.log(`Body (HTML):\n${html}`);
       }
       console.log('===================================================\n');
+      console.log("Order confirmation email sent successfully to:", to);
       return res.json({ success: true, mock: true, message: 'Mock email logged to console successfully' });
     }
 
     const info = await transporter.sendMail(mailOptions);
-    console.log(`[Email] Sent to ${to}: ${info.messageId}`);
+    console.log("Order confirmation email sent successfully to:", to);
     res.json({ success: true, messageId: info.messageId });
-  } catch (error) {
-    console.error('[Email Error] Failed to send email:', error);
-    res.status(500).send(`Failed to send email: ${error.message}`);
+  } catch (emailErr) {
+    console.error("FAILED TO SEND ORDER EMAIL:", emailErr);
+    res.status(500).send(`Failed to send email: ${emailErr.message}`);
   }
 });
 

@@ -238,6 +238,7 @@ export const createOrder = async (
       })),
       totalValue,
       requestedBy: username,
+      userEmail: username, // Explicitly include user email address in Firestore order document
       status: 'pending',
       createdAt: Date.now()
     };

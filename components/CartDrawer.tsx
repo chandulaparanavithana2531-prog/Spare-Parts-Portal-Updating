@@ -37,9 +37,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     }
 
     setSubmitting(true);
+    
+    // Diagnostic Audit: Ensure userEmail is valid before dispatching
+    const userEmail = currentUser.username;
+    console.log("[CartDrawer Checkout] Diagnostic: Dispatching order. userEmail (currentUser.username):", userEmail);
+    if (!userEmail) {
+      console.error("[CartDrawer Checkout] FAILED DIAGNOSTIC: userEmail is null or undefined!");
+    }
+
     try {
       // Create single bulk order
-      await createOrder(cartItems, currentUser.username);
+      await createOrder(cartItems, userEmail);
 
       onClearCart();
       onClose();
