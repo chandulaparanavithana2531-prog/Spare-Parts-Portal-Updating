@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { SparePart, SortField, SortDirection, User, CartItem } from '../types';
 import { ArrowUpDown, ArrowUp, ArrowDown, MapPin, ShoppingCart, Loader2, Edit2, Save, X, Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Filter, ShoppingBag, Eye, Trash2, Upload, Download, CheckCircle, Image as ImageIcon } from 'lucide-react';
-import { updateSparePart } from '../services/db';
+import { updateSparePart, getOrders } from '../services/db';
 import { ItemDetailsModal } from './ItemDetailsModal';
 import { EditItemModal } from './EditItemModal'; // Import Edit Modal
 
@@ -182,7 +182,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
   React.useEffect(() => {
     const loadOrders = async () => {
       try {
-        const allOrders = await import('../services/db').then(m => m.getOrders({ username: 'admin', role: 'admin', approved: true })); // Fetch as admin to see all reservations
+        const allOrders = await getOrders({ username: 'admin', role: 'admin', approved: true }); // Fetch as admin to see all reservations
         setOrders(allOrders);
       } catch (e) {
         console.error("Failed to load orders for reservation calc", e);

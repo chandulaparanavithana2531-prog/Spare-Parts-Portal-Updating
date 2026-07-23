@@ -32,6 +32,16 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
     try {
       if (isRegistering) {
+        // Validate Username
+        const isEmail = /^[a-zA-Z0-9._%+-]+@gmail\.com$/i.test(username);
+        const isAdmin = username.toLowerCase() === 'admin';
+        
+        if (!isEmail && !isAdmin) {
+          setError('Username must be a valid @gmail.com address, unless registering as admin.');
+          setLoading(false);
+          return;
+        }
+
         // Register
         const newUser: User = {
           username,
@@ -105,6 +115,11 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                   placeholder="Enter username"
                 />
               </div>
+              {isRegistering && username && !/^[a-zA-Z0-9._%+-]+@gmail\.com$/i.test(username) && username.toLowerCase() !== 'admin' && (
+                <p className="mt-1.5 text-xs text-red-500 font-semibold animate-in fade-in duration-200">
+                  Username must be a valid @gmail.com address, unless registering as admin.
+                </p>
+              )}
             </div>
 
             <div>

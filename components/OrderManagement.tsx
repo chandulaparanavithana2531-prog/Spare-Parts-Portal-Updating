@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Order, OrderStatus, User } from '../types';
-import { getOrders, processOrderItem } from '../services/db';
+import { getOrders, processOrderItem, clearOrders } from '../services/db';
 import { CheckCircle, XCircle, ChevronDown, ChevronUp, User as UserIcon, ArrowRight, ArrowLeft, Trash2, RotateCcw } from 'lucide-react';
 
 interface OrderManagementProps {
@@ -23,6 +23,38 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ currentUser })
   useEffect(() => {
     fetchOrders();
   }, [currentUser]);
+
+  // Deep linking: auto-expand order details from URL parameters
+  useEffect(() => {
+    if (orders.length === 0) return;
+    
+    const pathParts = window.location.pathname.split('/');
+    const ordersIndex = pathParts.indexOf('orders');
+    let targetOrderId = '';
+    
+    if (ordersIndex !== -1 && pathParts.length > ordersIndex + 1) {
+      targetOrderId = pathParts[ordersIndex + 1];
+    } else {
+      const params = new URLSearchParams(window.location.search);
+      targetOrderId = params.get('orderId') || '';
+    }
+
+    if (targetOrderId) {
+      setExpandedOrders(prev => {
+        const next = new Set(prev);
+        next.add(targetOrderId);
+        return next;
+      });
+      
+      // Smooth scroll to the targeted order card
+      setTimeout(() => {
+        const element = document.getElementById(`order-card-${targetOrderId}`);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 500);
+    }
+  }, [orders]);
 
   const handleProcess = async (orderId: string, itemId: string, status: OrderStatus) => {
     try {
@@ -75,7 +107,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ currentUser })
               if (confirm("WARNING: This will delete ALL order history permanently. Are you sure?")) {
                 try {
                   setLoading(true);
-                  await import('../services/db').then(m => m.clearOrders(currentUser.username));
+                  await clearOrders(currentUser.username);
                   await fetchOrders();
                   alert("Order history cleared.");
                 } catch (e) {
@@ -118,7 +150,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ currentUser })
               : order.items;
 
             return (
-              <div key={order.id} className={`bg-white rounded-xl border shadow-sm transition-all overflow-hidden ${order.status === 'pending' ? 'border-blue-200 ring-1 ring-blue-50' : 'border-gray-200 opacity-90'}`}>
+              <div id={`order-card-${order.id}`} key={order.id} className={`bg-white rounded-xl border shadow-sm transition-all overflow-hidden ${order.status === 'pending' ? 'border-blue-200 ring-1 ring-blue-50' : 'border-gray-200 opacity-90'}`}>
                 {/* Order Header Summary */}
                 <div
                   className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer hover:bg-gray-50 transition-colors"

@@ -1,4 +1,5 @@
 import { SparePart, HistoricalConsumptionRecord } from '../types';
+import { getHistoricalConsumption } from './db';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
@@ -240,7 +241,6 @@ export async function fetchHistoricalConsumption(): Promise<{
   } catch (error) {
     console.warn(`[API] Backend historical consumption fetch failed. Using fallback client database. Error:`, error);
     // Fetch directly from Firestore (which triggers local seeder if empty)
-    const { getHistoricalConsumption } = await import('./db');
     const localRecords = await getHistoricalConsumption();
     return {
       records: localRecords,
@@ -284,3 +284,46 @@ export async function uploadHistoricalConsumptionFile(
 
   return await response.json();
 }
+
+/**
+ * Sends an email notification by calling the backend /api/send-email endpoint.
+ */
+export async function sendEmailNotification(emailData: {
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+}): Promise<{ success: boolean; message?: string }> {
+  try {
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    console.log(`[Email Service] Sending notification to: ${emailData.to}`);
+    const response = await fetch(`${API_URL}/api/send-email`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(emailData),
+    });
+    
+    let resolvedResponse = response;
+    if (!resolvedResponse.ok && resolvedResponse.status === 404) {
+      resolvedResponse = await fetch(`${API_URL}/send-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(emailData),
+      });
+    }
+
+    if (!resolvedResponse.ok) {
+      throw new Error(`Server returned status: ${resolvedResponse.status}`);
+    }
+
+    return await resolvedResponse.json();
+  } catch (error) {
+    console.warn(`[Email Service] Failed to send email notification to ${emailData.to}. Fallback to console log. Error:`, error);
+    return { success: false, message: String(error) };
+  }
+}
+

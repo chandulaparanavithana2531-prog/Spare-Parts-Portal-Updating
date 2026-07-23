@@ -195,6 +195,13 @@ export const updateSparePart = async (part: SparePart, performerUsername: string
 
 // --- Order Operations ---
 
+const PLANT_EMAILS: Record<string, string> = {
+  'Lanka Tiles': 'lankatiles.admin@gmail.com',
+  'Lanka Wall Tiles': 'lankawalltiles.admin@gmail.com',
+  'Rocell Horana': 'rocellhorana.admin@gmail.com',
+  'Rocell Eheliyagoda': 'rocelleheliyagoda.admin@gmail.com'
+};
+
 export const createOrder = async (
   items: import('../types').CartItem[],
   username: string
@@ -247,6 +254,19 @@ export const createOrder = async (
     console.warn("[DB Fallback] Failed to save orders copy in localStorage:", err);
   }
 
+  // Fetch ordering user's plant affiliation
+  let userFactory = 'Unknown Plant';
+  try {
+    const userDocRef = doc(db, 'users', username);
+    const userSnap = await getDoc(userDocRef);
+    if (userSnap.exists()) {
+      const uData = userSnap.data() as User;
+      userFactory = uData.factoryAffiliation || 'Unknown Plant';
+    }
+  } catch (e) {
+    console.warn("[DB] Failed to fetch ordering user factory affiliation:", e);
+  }
+
   try {
     const batch = writeBatch(db);
     localOrdersToSave.forEach(order => {
@@ -261,8 +281,63 @@ export const createOrder = async (
       );
     });
     await batch.commit();
+
+    // Trigger emails asynchronously (non-blocking)
+    try {
+      const { sendEmailNotification } = await import('./apiService');
+      const portalUrl = window.location.origin;
+      
+      for (const order of localOrdersToSave) {
+        const itemsText = order.items.map(item => `- ${item.sparePartDescription} (ID: ${item.sparePartId}) | Qty: ${item.quantity} | Unit Cost: Rs. ${item.unitCost.toLocaleString()} | Total: Rs. ${item.totalValue.toLocaleString()}`).join('\n');
+        const orderUrl = `${portalUrl}/orders/${order.id}`;
+        const confirmUrl = `${portalUrl}/orders/${order.id}?action=confirm`;
+
+        // A. Email to the Ordering User
+        const emailToUser = {
+          to: order.requestedBy.includes('@') ? order.requestedBy : 'admin@gmail.com',
+          subject: "Order Confirmation - Spare Parts Portal",
+          text: `Hello ${order.requestedBy},\n\nYour order has been successfully placed.\n\nOrder ID: ${order.id}\n\nOrder Details:\n${itemsText}\nTotal Value: Rs. ${order.totalValue.toLocaleString()}\n\nYou can track your order status directly in the portal: ${orderUrl}\n\nThank you,\nSpare Parts Portal`,
+          html: `<p>Hello <strong>${order.requestedBy}</strong>,</p>
+                 <p>Your order has been successfully placed.</p>
+                 <p><strong>Order ID:</strong> ${order.id}</p>
+                 <h3>Order Details:</h3>
+                 <ul>
+                   ${order.items.map(item => `<li><strong>${item.sparePartDescription}</strong> (ID: ${item.sparePartId})<br/>Qty: ${item.quantity} | Unit Cost: Rs. ${item.unitCost.toLocaleString()} | Total: Rs. ${item.totalValue.toLocaleString()}</li>`).join('')}
+                 </ul>
+                 <p><strong>Total Value:</strong> Rs. ${order.totalValue.toLocaleString()}</p>
+                 <p><a href="${orderUrl}" style="display:inline-block;padding:10px 20px;background-color:#2563eb;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold;">View Order Status</a></p>
+                 <p>Or copy this link: <a href="${orderUrl}">${orderUrl}</a></p>
+                 <p>Thank you,<br/>Spare Parts Portal</p>`
+        };
+        sendEmailNotification(emailToUser).catch(err => console.warn("[DB] Failed to send email to user", err));
+
+        // B. Email to the Target Plant Receiver
+        const targetFactory = order.items[0].fromFactory;
+        const emailToPlant = {
+          to: PLANT_EMAILS[targetFactory] || 'admin@gmail.com',
+          subject: "Action Required: New Spare Part Order Received",
+          text: `Hello Plant Manager,\n\nA new order has been requested from your plant inventory.\n\nOrder ID: ${order.id}\nOrdering Plant: ${userFactory}\nRequested By: ${order.requestedBy}\n\nRequested Spares:\n${itemsText}\nTotal Value: Rs. ${order.totalValue.toLocaleString()}\n\nPlease review and confirm the order in the portal: ${confirmUrl}\n\nThank you,\nSpare Parts Portal`,
+          html: `<p>Hello Plant Manager,</p>
+                 <p>A new order has been requested from your plant inventory.</p>
+                 <p><strong>Order ID:</strong> ${order.id}</p>
+                 <p><strong>Ordering Plant:</strong> ${userFactory}</p>
+                 <p><strong>Requested By:</strong> ${order.requestedBy}</p>
+                 <h3>Requested Spares:</h3>
+                 <ul>
+                   ${order.items.map(item => `<li><strong>${item.sparePartDescription}</strong> (ID: ${item.sparePartId})<br/>Qty: ${item.quantity} | Total Price: Rs. ${item.totalValue.toLocaleString()}</li>`).join('')}
+                 </ul>
+                 <p><strong>Total Value:</strong> Rs. ${order.totalValue.toLocaleString()}</p>
+                 <p><a href="${confirmUrl}" style="display:inline-block;padding:10px 20px;background-color:#16a34a;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold;">Review & Confirm Order</a></p>
+                 <p>Or copy this link: <a href="${confirmUrl}">${confirmUrl}</a></p>
+                 <p>Thank you,<br/>Spare Parts Portal</p>`
+        };
+        sendEmailNotification(emailToPlant).catch(err => console.warn("[DB] Failed to send email to plant", err));
+      }
+    } catch (emailErr) {
+      console.warn("[DB] Failed to send emails", emailErr);
+    }
   } catch (error: any) {
-    console.warn("[DB Fallback] createOrder failed to write to Firestore Cloud (Quota Exceeded). Utilizing local storage copy. Error:", error.message);
+    console.warn("[DB Fallback] createOrder failed to write to Firestore Cloud (Quota Exceeded). Utilizing local storage copy. Error: " + error.message);
   }
 };
 
@@ -395,6 +470,27 @@ export const processOrderItem = async (orderId: string, itemPartId: string, stat
 
     batch.update(orderRef, { items: order.items, status: mainStatus, approvedAt: Date.now() });
     await batch.commit();
+
+    // C. Email back to ordering user
+    try {
+      const { sendEmailNotification } = await import('./apiService');
+      const portalUrl = window.location.origin;
+      const orderUrl = `${portalUrl}/orders/${orderId}`;
+      const emailToRequester = {
+        to: order.requestedBy.includes('@') ? order.requestedBy : 'admin@gmail.com',
+        subject: `Order Confirmed by ${item.fromFactory}`,
+        text: `Hello ${order.requestedBy},\n\nYour order for ${item.sparePartDescription} (Qty: ${item.quantity}, Price: Rs. ${item.totalValue.toLocaleString()}) has been confirmed by ${item.fromFactory}.\n\nOrder ID: ${orderId}\n\nYou can view the updated order status directly in the portal: ${orderUrl}\n\nThank you,\nSpare Parts Portal`,
+        html: `<p>Hello <strong>${order.requestedBy}</strong>,</p>
+               <p>Your order for <strong>${item.sparePartDescription}</strong> (Qty: ${item.quantity}, Price: Rs. ${item.totalValue.toLocaleString()}) has been confirmed by <strong>${item.fromFactory}</strong>.</p>
+               <p><strong>Order ID:</strong> ${orderId}</p>
+               <p><a href="${orderUrl}" style="display:inline-block;padding:10px 20px;background-color:#2563eb;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold;">View Order Details</a></p>
+               <p>Or copy this link: <a href="${orderUrl}">${orderUrl}</a></p>
+               <p>Thank you,<br/>Spare Parts Portal</p>`
+      };
+      sendEmailNotification(emailToRequester).catch(err => console.warn("[DB] Failed to send confirmation email", err));
+    } catch (err) {
+      console.warn("[DB] Failed to load email api service dynamically:", err);
+    }
 
     await logAction(
       performerUsername,

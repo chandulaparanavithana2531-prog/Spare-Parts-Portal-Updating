@@ -482,7 +482,17 @@ const DashboardGuide: React.FC = () => {
 };
 
 function App() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    const savedUser = localStorage.getItem('spareshare_currentUser');
+    if (savedUser) {
+      try {
+        return JSON.parse(savedUser);
+      } catch (e) {
+        console.error("Failed to parse saved user from localStorage", e);
+      }
+    }
+    return null;
+  });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
   const [parts, setParts] = useState<SparePart[]>([]);
@@ -519,6 +529,24 @@ function App() {
       localStorage.setItem('theme', 'light');
     }
   }, [darkMode]);
+
+  // Simple URL routing to switch to 'orders' tab on deep link
+  useEffect(() => {
+    const path = window.location.pathname;
+    const params = new URLSearchParams(window.location.search);
+    if (path.includes('/orders') || params.has('orderId')) {
+      setActiveTab('orders');
+    }
+  }, []);
+
+  // Sync current user with local storage
+  useEffect(() => {
+    if (currentUser) {
+      localStorage.setItem('spareshare_currentUser', JSON.stringify(currentUser));
+    } else {
+      localStorage.removeItem('spareshare_currentUser');
+    }
+  }, [currentUser]);
 
   // Dashboard Sub-tabs
   const [dashboardSubTab, setDashboardSubTab] = useState<'overview' | 'consumption'>('overview');

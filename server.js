@@ -8,6 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import fs from 'fs';
+import nodemailer from 'nodemailer';
 
 // Load environment variables
 dotenv.config();
@@ -53,6 +54,21 @@ try {
   console.log(`[Firebase] Initialized Admin SDK for project: ${projectId}`);
 } catch (error) {
   console.warn('[Firebase] Firebase Admin could not initialize (likely missing credentials). Using in-memory storage fallback.', error.message);
+}
+
+// Configure Email Transporter
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || 'smtp.ethereal.email',
+  port: parseInt(process.env.SMTP_PORT || '587', 10),
+  auth: {
+    user: process.env.SMTP_USER || 'ethereal.user',
+    pass: process.env.SMTP_PASS || 'ethereal.pass'
+  }
+});
+
+const isMockEmail = !process.env.SMTP_USER || process.env.SMTP_USER === 'ethereal.user';
+if (isMockEmail) {
+  console.warn('[Email] SMTP credentials are not configured. Running in Mock Mode (emails print to console).');
 }
 
 // In-Memory Fallback Storage
@@ -581,6 +597,42 @@ Instructions:
       success: false,
       message: `Failed to generate response: ${err.message}`
     });
+  }
+});
+
+app.post(['/send-email', '/api/send-email'], async (req, res) => {
+  const { to, subject, text, html } = req.body;
+  if (!to || !subject || (!text && !html)) {
+    return res.status(400).send('Missing to, subject, or message body');
+  }
+
+  const mailOptions = {
+    from: process.env.SMTP_FROM || '"SpareShare Portal" <noreply@spareshare.com>',
+    to,
+    subject,
+    text,
+    html
+  };
+
+  try {
+    if (isMockEmail) {
+      console.log('\n================= MOCK EMAIL SENT =================');
+      console.log(`To: ${to}`);
+      console.log(`Subject: ${subject}`);
+      console.log(`Body (Text):\n${text || 'N/A'}`);
+      if (html) {
+        console.log(`Body (HTML):\n${html}`);
+      }
+      console.log('===================================================\n');
+      return res.json({ success: true, mock: true, message: 'Mock email logged to console successfully' });
+    }
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`[Email] Sent to ${to}: ${info.messageId}`);
+    res.json({ success: true, messageId: info.messageId });
+  } catch (error) {
+    console.error('[Email Error] Failed to send email:', error);
+    res.status(500).send(`Failed to send email: ${error.message}`);
   }
 });
 
