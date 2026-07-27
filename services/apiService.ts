@@ -327,3 +327,46 @@ export async function sendEmailNotification(emailData: {
   }
 }
 
+/**
+ * Notifies the backend that a new order has been created.
+ * Triggers the OrderCreated backend event and runs the background email job.
+ */
+export async function notifyOrderCreated(eventData: {
+  order: any;
+  userEmail: string;
+  plantEmail: string;
+  userFactory: string;
+}): Promise<{ success: boolean; message?: string }> {
+  try {
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    console.log(`[API Service] Notifying backend of OrderCreated for order: ${eventData.order.id}`);
+    
+    let response = await fetch(`${API_URL}/api/orders/created`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(eventData),
+    });
+
+    if (!response.ok && response.status === 404) {
+      response = await fetch(`${API_URL}/orders/created`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(eventData),
+      });
+    }
+
+    if (!response.ok) {
+      throw new Error(`Server returned status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.warn(`[API Service] Failed to notify backend of OrderCreated event. Error:`, error);
+    return { success: false, message: String(error) };
+  }
+}
+

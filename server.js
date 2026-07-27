@@ -9,6 +9,12 @@ import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import fs from 'fs';
 import nodemailer from 'nodemailer';
+import {
+  orderEventEmitter,
+  EmailQueue,
+  generateCustomerConfirmationEmail,
+  generatePlantNotificationEmail
+} from './emailQueue.js';
 
 // Load environment variables
 dotenv.config();
@@ -70,6 +76,39 @@ const isMockEmail = !process.env.SMTP_USER || process.env.SMTP_USER === 'etherea
 if (isMockEmail) {
   console.warn('[Email] SMTP credentials are not configured. Running in Mock Mode (emails print to console).');
 }
+
+// Initialize global EmailQueue and register event listener
+const emailQueue = new EmailQueue(transporter);
+
+orderEventEmitter.on('OrderCreated', ({ order, userEmail, plantEmail, userFactory }) => {
+  console.log(`[Event Listener] OrderCreated received for Order ID: ${order.id}. Enqueuing notification emails...`);
+
+  // 1. Calculate Estimated Fulfillment Timeframe
+  const isCrossPlant = order.items && order.items.length > 0 && order.items[0].fromFactory !== userFactory;
+  const estimatedTimeframe = isCrossPlant ? '5 Business Days (Cross-Plant Transfer)' : '2 Business Days (Local Fulfillment)';
+
+  // 2. Queue Recipient 1: User Confirmation Email
+  const userHtml = generateCustomerConfirmationEmail(order, userEmail, estimatedTimeframe);
+  const userMailOptions = {
+    from: process.env.SMTP_FROM || '"SpareShare Portal" <noreply@spareshare.com>',
+    to: userEmail,
+    subject: `Order Confirmation - Spare Parts Portal (Order Ref: ${order.id})`,
+    text: `Hello ${userEmail},\n\nYour order has been successfully placed.\n\nOrder ID: ${order.id}\nEstimated fulfillment: ${estimatedTimeframe}\n\nThank you,\nSpare Parts Portal`,
+    html: userHtml
+  };
+  emailQueue.addJob(userMailOptions);
+
+  // 3. Queue Recipient 2: Plant Work Order Dispatch Alert
+  const plantHtml = generatePlantNotificationEmail(order, plantEmail, userFactory || 'Unknown Plant', userEmail);
+  const plantMailOptions = {
+    from: process.env.SMTP_FROM || '"SpareShare Portal" <noreply@spareshare.com>',
+    to: plantEmail,
+    subject: `Action Required: New Work Order Dispatch (Order Ref: ${order.id})`,
+    text: `Hello Plant Manager,\n\nA new work order has been requested from your plant inventory.\n\nOrder ID: ${order.id}\nCustomer: ${userEmail}\n\nPlease prepare the items.\n\nThank you,\nSpare Parts Portal`,
+    html: plantHtml
+  };
+  emailQueue.addJob(plantMailOptions);
+});
 
 // In-Memory Fallback Storage
 let memoryHistoricalRecords = [
@@ -634,6 +673,29 @@ app.post(['/send-email', '/api/send-email'], async (req, res) => {
   } catch (emailErr) {
     console.error("FAILED TO SEND ORDER EMAIL:", emailErr);
     res.status(500).send(`Failed to send email: ${emailErr.message}`);
+  }
+});
+
+app.post(['/orders/created', '/api/orders/created'], async (req, res) => {
+  const { order, userEmail, plantEmail, userFactory } = req.body;
+  if (!order || !userEmail || !plantEmail) {
+    return res.status(400).send('Missing order payload, userEmail, or plantEmail');
+  }
+
+  try {
+    console.log(`[API] Received OrderCreated event notification for order ${order.id}. Emitting event...`);
+    
+    // Emit the OrderCreated event to trigger listeners and queue tasks in the background
+    orderEventEmitter.emit('OrderCreated', { order, userEmail, plantEmail, userFactory });
+
+    // Respond immediately to prevent API latency during order placement
+    res.status(202).json({
+      success: true,
+      message: 'Order processing and notification emails triggered in background.'
+    });
+  } catch (error) {
+    console.error(`[API] Error triggering OrderCreated event:`, error);
+    res.status(500).send(`Failed to process order event: ${error.message}`);
   }
 });
 

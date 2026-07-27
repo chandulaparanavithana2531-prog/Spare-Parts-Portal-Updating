@@ -84,6 +84,7 @@ export interface Order {
   totalValue: number; // Sum of all items
   requestedBy: string; // username
   userEmail?: string;  // Explicitly included email address
+  plantEmail?: string; // Plant manager/operations email address
   status: OrderStatus;
   createdAt: number;
   approvedAt?: number;
