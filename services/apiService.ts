@@ -3,6 +3,23 @@ import { getHistoricalConsumption } from './db';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
+async function fetchWithTimeout(resource: string | URL, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
+  const { timeout = 2500, ...restOptions } = options;
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(resource, {
+      ...restOptions,
+      signal: controller.signal
+    });
+    clearTimeout(id);
+    return response;
+  } catch (err) {
+    clearTimeout(id);
+    throw err;
+  }
+}
+
 // High-quality mock data for backend fallback when the server is offline or unavailable
 export const MOCK_BACKEND_PARTS: SparePart[] = [
   {
@@ -87,10 +104,10 @@ export interface FetchFactoriesResponse {
 export async function fetchBackendParts(): Promise<FetchPartsResponse> {
   try {
     console.log(`[API] Fetching parts from ${API_URL}/parts...`);
-    let response = await fetch(`${API_URL}/parts`);
+    let response = await fetchWithTimeout(`${API_URL}/parts`);
     if (!response.ok) {
       console.log(`[API] /parts returned ${response.status}, trying /api/parts...`);
-      response = await fetch(`${API_URL}/api/parts`);
+      response = await fetchWithTimeout(`${API_URL}/api/parts`);
     }
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -117,10 +134,10 @@ export async function fetchBackendParts(): Promise<FetchPartsResponse> {
 export async function fetchBackendFactories(): Promise<FetchFactoriesResponse> {
   try {
     console.log(`[API] Fetching factories from ${API_URL}/factories...`);
-    let response = await fetch(`${API_URL}/factories`);
+    let response = await fetchWithTimeout(`${API_URL}/factories`);
     if (!response.ok) {
       console.log(`[API] /factories returned ${response.status}, trying /api/factories...`);
-      response = await fetch(`${API_URL}/api/factories`);
+      response = await fetchWithTimeout(`${API_URL}/api/factories`);
     }
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -138,6 +155,7 @@ export async function fetchBackendFactories(): Promise<FetchFactoriesResponse> {
     };
   }
 }
+
 
 /**
  * Merges datasets from local Firestore and backend, stripping out all duplicates.
@@ -225,10 +243,10 @@ export async function fetchHistoricalConsumption(): Promise<{
 }> {
   try {
     console.log(`[API] Fetching historical consumption from ${API_URL}/historical-consumption...`);
-    let response = await fetch(`${API_URL}/historical-consumption`);
+    let response = await fetchWithTimeout(`${API_URL}/historical-consumption`);
     if (!response.ok) {
       console.log(`[API] /historical-consumption returned ${response.status}, trying /api/historical-consumption...`);
-      response = await fetch(`${API_URL}/api/historical-consumption`);
+      response = await fetchWithTimeout(`${API_URL}/api/historical-consumption`);
     }
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);

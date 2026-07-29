@@ -495,7 +495,14 @@ function App() {
   });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
-  const [parts, setParts] = useState<SparePart[]>([]);
+  const [parts, setParts] = useState<SparePart[]>(() => {
+    try {
+      const local = localStorage.getItem('spareshare_inventory');
+      return local ? JSON.parse(local) : [];
+    } catch (e) {
+      return [];
+    }
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'orders' | 'users' | 'audit'>('dashboard');
   const [processingFactory, setProcessingFactory] = useState<string | null>(null);
@@ -553,9 +560,23 @@ function App() {
 
   // System Reports (SAP / Oracle) States
   const [manageDataTab, setManageDataTab] = useState<'excel' | 'system' | 'history' | 'upload_history'>('excel');
-  const [uploadHistory, setUploadHistory] = useState<UploadHistoryRecord[]>([]);
+  const [uploadHistory, setUploadHistory] = useState<UploadHistoryRecord[]>(() => {
+    try {
+      const local = localStorage.getItem('spareshare_uploadHistory');
+      return local ? JSON.parse(local) : [];
+    } catch (e) {
+      return [];
+    }
+  });
   const [isRevertingUpload, setIsRevertingUpload] = useState<string | null>(null);
-  const [historicalConsumption, setHistoricalConsumption] = useState<HistoricalConsumptionRecord[]>([]);
+  const [historicalConsumption, setHistoricalConsumption] = useState<HistoricalConsumptionRecord[]>(() => {
+    try {
+      const local = localStorage.getItem('spareshare_historicalConsumption');
+      return local ? JSON.parse(local) : [];
+    } catch (e) {
+      return [];
+    }
+  });
   const [selectedHistoryFactory, setSelectedHistoryFactory] = useState<string>('All');
   const [isProcessingHistory, setIsProcessingHistory] = useState(false);
   const [historyFeedback, setHistoryFeedback] = useState<string | null>(null);
@@ -822,7 +843,14 @@ function App() {
   // API integration states
   const [duplicatesRemoved, setDuplicatesRemoved] = useState(0);
   const [apiSource, setApiSource] = useState<'backend' | 'fallback'>('fallback');
-  const [factories, setFactories] = useState(FACTORIES);
+  const [factories, setFactories] = useState<any[]>(() => {
+    try {
+      const local = localStorage.getItem('spareshare_factories');
+      return local ? JSON.parse(local) : FACTORIES;
+    } catch (e) {
+      return FACTORIES;
+    }
+  });
 
   // Load data from DB on Login
   useEffect(() => {
@@ -837,13 +865,24 @@ function App() {
   }, [currentUser]);
 
   const refreshData = async () => {
-    setLoadingDB(true);
+    if (parts.length === 0) {
+      setLoadingDB(true);
+    }
     try {
-      // 1. Fetch local Firestore parts
-      const localData = await getInventory();
-
-      // 2. Fetch backend parts
-      const { parts: backendData, source: partsSource } = await fetchBackendParts();
+      // Fetch all required data concurrently
+      const [
+        localData,
+        { parts: backendData, source: partsSource },
+        { factories: backendFactories },
+        { records: histRecords },
+        historyLogs
+      ] = await Promise.all([
+        getInventory(),
+        fetchBackendParts(),
+        fetchBackendFactories(),
+        fetchHistoricalConsumption(),
+        getUploadHistory()
+      ]);
 
       // 3. Merge and deduplicate
       const { parts: mergedParts, removedDuplicatesCount } = mergeAndDeduplicate(localData, backendData);
@@ -877,9 +916,13 @@ function App() {
       setDuplicatesRemoved(removedDuplicatesCount);
       setApiSource(partsSource);
 
+      try {
+        localStorage.setItem('spareshare_inventory', JSON.stringify(enrichedParts));
+      } catch (e) {
+        console.warn("[DB Fallback] Failed to sync to localStorage:", e);
+      }
+
       // 4. Fetch backend factories dynamically
-      const { factories: backendFactories } = await fetchBackendFactories();
-      
       const FACTORY_THEMES = [
         { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', icon: 'text-blue-600', hover: 'hover:border-blue-400' },
         { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', icon: 'text-emerald-600', hover: 'hover:border-emerald-400' },
@@ -901,14 +944,21 @@ function App() {
         }
       });
       setFactories(updatedFactories);
+      try {
+        localStorage.setItem('spareshare_factories', JSON.stringify(updatedFactories));
+      } catch (e) {}
 
       // 5. Fetch historical consumption
-      const { records: histRecords } = await fetchHistoricalConsumption();
       setHistoricalConsumption(histRecords);
+      try {
+        localStorage.setItem('spareshare_historicalConsumption', JSON.stringify(histRecords));
+      } catch (e) {}
 
       // 6. Fetch upload history
-      const historyLogs = await getUploadHistory();
       setUploadHistory(historyLogs);
+      try {
+        localStorage.setItem('spareshare_uploadHistory', JSON.stringify(historyLogs));
+      } catch (e) {}
     } catch (error) {
       console.error("Error refreshing unified data sources:", error);
     } finally {
@@ -919,19 +969,15 @@ function App() {
   const fetchNotifications = async () => {
     if (!currentUser) return;
     try {
-      // 1. Orders
-      const allOrders = await getOrders(currentUser);
+      const [allOrders, pendingUsersList] = await Promise.all([
+        getOrders(currentUser),
+        currentUser.role === 'admin' ? getPendingUsers() : Promise.resolve([])
+      ]);
       const pendingOrders = allOrders.filter(o =>
         o.status === 'pending' &&
         (currentUser.role === 'admin' || (o.items.length > 0 && o.items[0].fromFactory === currentUser.factoryAffiliation))
       ).length;
-
-      // 2. Users (Admin Only)
-      let pendingUsers = 0;
-      if (currentUser.role === 'admin') {
-        const users = await getPendingUsers();
-        pendingUsers = users.length;
-      }
+      const pendingUsers = pendingUsersList.length;
 
       setNotificationCounts({ orders: pendingOrders, users: pendingUsers });
     } catch (error) {
