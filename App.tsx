@@ -1372,52 +1372,6 @@ Ensure the Excel format is correct and you have a stable internet connection.
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
         <main className="flex-1 p-6 md:p-8 space-y-6 overflow-y-auto">
-        {/* Connection status and deduplication tracker */}
-        <div className="bg-white/80 backdrop-blur-md p-5 rounded-3xl border border-gray-200/50 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-              apiSource === 'backend' ? 'bg-green-50 text-green-600 shadow-sm shadow-green-100' : 'bg-amber-50 text-amber-600 shadow-sm shadow-amber-100'
-            }`}>
-              <Database className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-sm font-bold text-gray-900 leading-tight">Unified Portal Connection</h2>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className={`w-2 h-2 rounded-full ${apiSource === 'backend' ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`}></span>
-                <span className="text-xs text-gray-500 font-medium">
-                  {apiSource === 'backend' 
-                    ? 'Connected to Live Server: http://localhost:3000' 
-                    : 'Backend server offline: Using high-quality mock data'}
-                </span>
-              </div>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-end">
-            <div className="text-left md:text-right">
-              <p className="text-[10px] uppercase tracking-widest text-gray-400 font-extrabold">Data Source Status</p>
-              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider mt-1 ${
-                apiSource === 'backend' 
-                  ? 'bg-green-50 text-green-700 border border-green-100' 
-                  : 'bg-amber-50 text-amber-700 border border-amber-100'
-              }`}>
-                {apiSource === 'backend' ? 'Live API' : 'Fallback Mode'}
-              </span>
-            </div>
-            
-            <div className="h-8 w-[1px] bg-gray-200"></div>
-            
-            <div className="text-right">
-              <p className="text-[10px] uppercase tracking-widest text-gray-400 font-extrabold">Deduplication Agent</p>
-              <div className="flex items-center justify-end gap-1.5 mt-1">
-                <Sparkles className="w-3.5 h-3.5 text-blue-500 animate-pulse" />
-                <span className="text-xs font-black text-blue-600">
-                  {duplicatesRemoved} duplicates stripped
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
 
         {/* State: No Data or Explicit Upload Mode (Only Admin can see upload modal) */}
         {(parts.length === 0 || showUploadModal) && currentUser.role === 'admin' ? (
