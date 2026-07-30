@@ -78,14 +78,14 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-6 px-4 sm:py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center">
           <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold shadow-lg shadow-blue-200 text-xl">
             S
           </div>
         </div>
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+        <h2 className="mt-6 text-center text-2xl sm:text-3xl font-extrabold text-gray-900">
           {isRegistering ? 'Create an Account' : 'Sign in to SpareShare'}
         </h2>
         <p className="mt-2 text-center text-sm text-gray-600">
@@ -94,7 +94,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10 border border-gray-100">
+        <div className="bg-white py-6 px-4 shadow rounded-2xl sm:py-8 sm:px-10 border border-gray-100">
           <form className="space-y-6" onSubmit={handleSubmit}>
             <div>
               <label htmlFor="username" className="block text-sm font-medium text-gray-700">

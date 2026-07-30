@@ -236,62 +236,86 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col h-full overflow-hidden">
 
       {/* --- Filter Bar --- */}
-      <div className="p-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`p-2 rounded-lg border transition-colors flex items-center gap-2 text-sm font-medium ${showFilters ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-100'}`}
-          >
-            <Filter className="w-4 h-4" /> Filters
-          </button>
+      <div className="p-3 border-b border-gray-100 bg-gray-50 flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`p-2 rounded-lg border transition-colors flex items-center gap-2 text-sm font-medium ${showFilters ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-100'}`}
+            >
+              <Filter className="w-4 h-4" /> Filters
+            </button>
 
-          <button
-            onClick={() => {
-              // Convert processedData to CSV
-              const headers = ['Spare Type', 'Item Code', 'Part Number', 'Description', 'Criticality', 'Machine', 'Category', 'Available', 'Reserved', 'Unit Cost', 'Total Value', 'Factory'];
-              const csvContent = [
-                headers.join(','),
-                ...processedData.map(item => {
-                  const reserved = reservedStock.get(item.id) || 0;
-                  const available = item.onHand - reserved;
-                  return [
-                    `"${item.spareType || ''}"`,
-                    `"${item.materialNumber || ''}"`,
-                    `"${item.partNumber || ''}"`,
-                    `"${(item.description || '').replace(/"/g, '""')}"`, // Escape quotes
-                    `"${item.criticality || ''}"`,
-                    `"${item.machine || ''}"`,
-                    `"${item.categoryName || ''}"`,
-                    available,
-                    reserved,
-                    item.unitCost,
-                    available * item.unitCost, // Total Value based on available
-                    `"${item.factoryId || ''}"`
-                  ].join(',');
-                })
-              ].join('\n');
+            <button
+              onClick={() => {
+                // Convert processedData to CSV
+                const headers = ['Spare Type', 'Item Code', 'Part Number', 'Description', 'Criticality', 'Machine', 'Category', 'Available', 'Reserved', 'Unit Cost', 'Total Value', 'Factory'];
+                const csvContent = [
+                  headers.join(','),
+                  ...processedData.map(item => {
+                    const reserved = reservedStock.get(item.id) || 0;
+                    const available = item.onHand - reserved;
+                    return [
+                      `"${item.spareType || ''}"`,
+                      `"${item.materialNumber || ''}"`,
+                      `"${item.partNumber || ''}"`,
+                      `"${(item.description || '').replace(/"/g, '""')}"`, // Escape quotes
+                      `"${item.criticality || ''}"`,
+                      `"${item.machine || ''}"`,
+                      `"${item.categoryName || ''}"`,
+                      available,
+                      reserved,
+                      item.unitCost,
+                      available * item.unitCost, // Total Value based on available
+                      `"${item.factoryId || ''}"`
+                    ].join(',');
+                  })
+                ].join('\n');
 
-              const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement('a');
-              link.setAttribute('href', url);
-              link.setAttribute('download', `inventory_export_${new Date().toISOString().split('T')[0]}.csv`);
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
-            }}
-            className="p-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-100 transition-colors flex items-center gap-2 text-sm font-medium"
-            title="Download Filtered Data as CSV"
-          >
-            <Download className="w-4 h-4" /> Export
-          </button>
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.setAttribute('href', url);
+                link.setAttribute('download', `inventory_export_${new Date().toISOString().split('T')[0]}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+              }}
+              className="p-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-100 transition-colors flex items-center gap-2 text-sm font-medium"
+              title="Download Filtered Data as CSV"
+            >
+              <Download className="w-4 h-4" /> Export
+            </button>
+          </div>
 
-          {showFilters && (
-            <div className="flex items-center gap-2 animate-in slide-in-from-left-2 duration-200">
+          {/* Selection Actions */}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2 bg-blue-50 px-3 py-1 rounded-lg border border-blue-100 animate-in fade-in zoom-in duration-200">
+              <span className="text-xs font-bold text-blue-800">{selectedIds.size} selected</span>
+              <div className="h-4 w-px bg-blue-200 mx-1"></div>
+              <button
+                onClick={handleBulkAddToCart}
+                className="text-xs font-medium text-blue-700 hover:text-blue-900 flex items-center gap-1"
+              >
+                <ShoppingBag className="w-3 h-3" /> Add to Cart
+              </button>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="ml-2 text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {showFilters && (
+          <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2 bg-white p-3 rounded-lg border border-gray-200/50 animate-in slide-in-from-top-2 duration-200">
+            <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
               <select
                 value={filters.factoryId}
                 onChange={(e) => setFilters({ ...filters, factoryId: e.target.value })}
-                className="text-xs p-2 rounded border border-gray-300 bg-white focus:border-blue-500 focus:outline-none"
+                className="text-xs p-2 rounded border border-gray-300 bg-white focus:border-blue-500 focus:outline-none w-full"
               >
                 <option value="">All Factories</option>
                 {uniqueValues.factories.map(f => <option key={f} value={f}>{f}</option>)}
@@ -300,7 +324,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
               <select
                 value={filters.categoryName}
                 onChange={(e) => setFilters({ ...filters, categoryName: e.target.value })}
-                className="text-xs p-2 rounded border border-gray-300 bg-white focus:border-blue-500 focus:outline-none max-w-[150px]"
+                className="text-xs p-2 rounded border border-gray-300 bg-white focus:border-blue-500 focus:outline-none w-full"
               >
                 <option value="">All Categories</option>
                 {uniqueValues.categories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -309,42 +333,23 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
               <select
                 value={filters.machine}
                 onChange={(e) => setFilters({ ...filters, machine: e.target.value })}
-                className="text-xs p-2 rounded border border-gray-300 bg-white focus:border-blue-500 focus:outline-none max-w-[150px]"
+                className="text-xs p-2 rounded border border-gray-300 bg-white focus:border-blue-500 focus:outline-none w-full"
               >
                 <option value="">All Machines</option>
                 {uniqueValues.machines.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
-
-              {(filters.factoryId || filters.categoryName || filters.machine) && (
-                <button
-                  onClick={() => setFilters({ factoryId: '', machine: '', categoryName: '' })}
-                  className="p-2 text-red-500 hover:bg-red-50 rounded-lg"
-                  title="Clear Filters"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
             </div>
-          )}
-        </div>
 
-        {/* Selection Actions */}
-        {selectedIds.size > 0 && (
-          <div className="flex items-center gap-2 bg-blue-50 px-3 py-1 rounded-lg border border-blue-100 animate-in fade-in zoom-in duration-200">
-            <span className="text-xs font-bold text-blue-800">{selectedIds.size} selected</span>
-            <div className="h-4 w-px bg-blue-200 mx-1"></div>
-            <button
-              onClick={handleBulkAddToCart}
-              className="text-xs font-medium text-blue-700 hover:text-blue-900 flex items-center gap-1"
-            >
-              <ShoppingBag className="w-3 h-3" /> Add to Cart
-            </button>
-            <button
-              onClick={() => setSelectedIds(new Set())}
-              className="ml-2 text-gray-400 hover:text-gray-600"
-            >
-              <X className="w-3 h-3" />
-            </button>
+            {(filters.factoryId || filters.categoryName || filters.machine) && (
+              <button
+                onClick={() => setFilters({ factoryId: '', machine: '', categoryName: '' })}
+                className="p-2 text-red-500 hover:bg-red-50 rounded-lg flex items-center justify-center border border-transparent hover:border-red-100 shrink-0"
+                title="Clear Filters"
+              >
+                <X className="w-4 h-4 mr-1 md:mr-0" />
+                <span className="md:hidden text-xs font-semibold">Clear Filters</span>
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -581,12 +586,12 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
       </div>
 
       {/* Pagination */}
-      <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between bg-gray-50 rounded-b-xl">
-        <div className="text-sm text-gray-500">
+      <div className="px-4 py-4 sm:px-6 border-t border-gray-100 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between bg-gray-50 rounded-b-xl">
+        <div className="text-sm text-gray-500 text-center sm:text-left">
           Showing <span className="font-medium">{(page - 1) * itemsPerPage + 1}</span> - <span className="font-medium">{Math.min(page * itemsPerPage, processedData.length)}</span> of <span className="font-medium">{processedData.length}</span> results
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-center gap-2">
           <div className="flex gap-1 mr-4">
             <button
               onClick={() => setPage(1)}

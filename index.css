@@ -4,3 +4,62 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* Mobile-First Custom Media Queries and Touch Target Enhancements */
+
+/* Mobile standard interactive optimizations */
+@media (max-width: 767px) {
+  button, 
+  a, 
+  input[type="button"], 
+  input[type="submit"], 
+  select {
+    min-height: 44px; /* Touch target size guidelines */
+  }
+  
+  /* Make sure all inputs have comfortable padding for touch */
+  input, select, textarea {
+    padding-top: 0.75rem !important;
+    padding-bottom: 0.75rem !important;
+    font-size: 16px !important; /* Prevents auto-zoom on iOS */
+  }
+  
+  /* Prevent background scrolling when menu drawer is open */
+  body.mobile-menu-active {
+    overflow: hidden;
+  }
+}
+
+/* Animations for Mobile Navigation Drawer */
+@keyframes slideInFromLeft {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in-left {
+  animation: slideInFromLeft 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Fluid design utility classes */
+.fluid-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+}
+
+/* Table Responsive wrapper */
+.table-responsive-container {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Image scaling */
+img {
+  max-width: 100%;
+  height: auto;
+}

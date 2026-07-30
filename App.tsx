@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Upload, Search, LayoutDashboard, SlidersHorizontal, Sparkles, CheckCircle, RefreshCw, Database, FileSpreadsheet, LogOut, ShoppingBag, ShoppingCart, Plus, Trash2, ShieldAlert, Sun, Moon, LogIn, Globe, ArrowRight, Menu } from 'lucide-react';
+import { Upload, Search, LayoutDashboard, SlidersHorizontal, Sparkles, CheckCircle, RefreshCw, Database, FileSpreadsheet, LogOut, ShoppingBag, ShoppingCart, Plus, Trash2, ShieldAlert, Sun, Moon, LogIn, Globe, ArrowRight, Menu, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 import { parseExcelFile, parseSystemReport } from './services/excelService';
@@ -494,7 +494,20 @@ function App() {
     return null;
   });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (isMobileMenuOpen) {
+      document.body.classList.add('mobile-menu-active');
+    } else {
+      document.body.classList.remove('mobile-menu-active');
+    }
+    return () => {
+      document.body.classList.remove('mobile-menu-active');
+    };
+  }, [isMobileMenuOpen]);
+
   const [parts, setParts] = useState<SparePart[]>(() => {
     try {
       const local = localStorage.getItem('spareshare_inventory');
@@ -1246,8 +1259,171 @@ Ensure the Excel format is correct and you have a stable internet connection.
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      {/* Sidebar Navigation */}
-      <aside className={`h-screen sticky top-0 flex flex-col justify-between border-r border-gray-200 bg-white z-30 transition-all duration-300 shrink-0 ${isSidebarCollapsed ? 'w-20' : 'w-64'}`}>
+      {/* Mobile Drawer Navigation (Backdrop + Content) */}
+      {isMobileMenuOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          {/* Backdrop overlay */}
+          <div 
+            className="fixed inset-0 bg-black/50 transition-opacity duration-300"
+            onClick={() => setIsMobileMenuOpen(false)}
+          />
+          {/* Drawer Panel */}
+          <aside className="fixed inset-y-0 left-0 flex flex-col justify-between border-r border-gray-200 bg-white z-50 w-64 max-w-xs animate-slide-in-left shadow-2xl">
+            {/* Drawer top part: Hamburger/Close button and Logo */}
+            <div className="p-4 flex flex-col gap-4 shrink-0">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center text-white font-bold shadow-md shadow-blue-200">
+                    <span className="text-base">S</span>
+                  </div>
+                  <div>
+                    <h1 className="text-sm font-bold text-gray-900 leading-none">SpareShare</h1>
+                    <p className="text-[9px] uppercase tracking-wider text-gray-400 font-bold mt-0.5">
+                      {currentUser.role === 'admin' ? 'Admin Portal' : 'User Portal'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                  title="Close Menu"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Middle part: Navigation Menu Links */}
+            <div className="flex-1 px-3 py-4 space-y-1 overflow-y-auto min-h-0">
+              {(['dashboard', 'inventory', 'orders', 'users', 'audit'] as const).map((tab) => {
+                if ((tab === 'users' || tab === 'audit') && currentUser.role !== 'admin') return null;
+                
+                const isActive = activeTab === tab;
+                const icons = {
+                  dashboard: LayoutDashboard,
+                  inventory: SlidersHorizontal,
+                  orders: ShoppingBag,
+                  users: Users,
+                  audit: ShieldAlert
+                };
+                const Icon = icons[tab];
+                const count = tab === 'orders' ? notificationCounts.orders : (tab === 'users' ? notificationCounts.users : 0);
+
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => {
+                      setActiveTab(tab);
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`
+                      w-full flex items-center gap-3 px-3 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all duration-200 cursor-pointer relative group
+                      ${isActive 
+                        ? 'bg-white shadow border-l-4 border-blue-600 pl-2 text-blue-600 font-black' 
+                        : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'}
+                    `}
+                  >
+                    <div className="relative flex items-center justify-center shrink-0 w-5 h-5">
+                      <Icon className={`w-5 h-5 ${isActive ? 'text-blue-600 font-black' : 'text-gray-400 group-hover:text-gray-600'}`} />
+                    </div>
+                    <span className="truncate animate-in fade-in duration-200">{tab}</span>
+                    {count > 0 && (
+                      <span className="ml-auto flex h-5 px-1.5 min-w-[20px] items-center justify-center rounded-full bg-red-500 text-[10px] text-white font-bold border border-white shadow-sm">
+                        {count > 9 ? '9+' : count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+
+              {/* AI Assistant Drawer Trigger */}
+              <button
+                onClick={() => {
+                  setIsChatOpen(!isChatOpen);
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`
+                  w-full flex items-center gap-3 px-3 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all duration-200 cursor-pointer relative group
+                  ${isChatOpen 
+                    ? 'bg-blue-50 text-blue-600 border-l-4 border-blue-600 pl-2 text-blue-600 font-black' 
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'}
+                `}
+              >
+                <div className="relative flex items-center justify-center shrink-0 w-5 h-5">
+                  <Sparkles className={`w-5 h-5 ${isChatOpen ? 'text-blue-600 font-black animate-pulse' : 'text-gray-400 group-hover:text-gray-600'}`} />
+                </div>
+                <span className="truncate animate-in fade-in duration-200">AI Assistant</span>
+                <span className="ml-auto text-[9px] font-black uppercase bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-md scale-90">
+                  AI
+                </span>
+              </button>
+            </div>
+
+            {/* Bottom part: User Profile, Theme, Cart, and Logout */}
+            <div className="p-3 border-t border-gray-100 space-y-1.5 shrink-0">
+              {/* Cart Button (Users only) */}
+              {currentUser.role === 'user' && (
+                <button
+                  onClick={() => {
+                    setIsCartOpen(true);
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all duration-200 cursor-pointer relative"
+                >
+                  <div className="relative flex items-center justify-center shrink-0 w-5 h-5">
+                    <ShoppingCart className="w-5 h-5 text-gray-400 group-hover:text-blue-600" />
+                    {cartItems.length > 0 && (
+                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white"></span>
+                    )}
+                  </div>
+                  <span>View Cart</span>
+                </button>
+              )}
+
+              {/* Theme Toggle Button */}
+              <button
+                onClick={() => setDarkMode(!darkMode)}
+                className="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all duration-200 cursor-pointer"
+              >
+                <div className="flex items-center justify-center shrink-0 w-5 h-5">
+                  {darkMode ? <Sun className="w-5 h-5 text-yellow-500" /> : <Moon className="w-5 h-5 text-gray-400" />}
+                </div>
+                <span className="truncate">
+                  {darkMode ? 'Light Mode' : 'Dark Mode'}
+                </span>
+              </button>
+
+              {/* Profile summary */}
+              <div className="flex items-center gap-3 px-3 py-2">
+                <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm shrink-0 uppercase">
+                  {currentUser.username.substring(0, 2)}
+                </div>
+                <div className="text-left min-w-0 flex-1">
+                  <p className="text-xs font-bold text-gray-900 truncate leading-tight">{currentUser.username}</p>
+                  <p className="text-[10px] text-gray-400 font-semibold truncate leading-none mt-0.5 capitalize">{currentUser.role}</p>
+                </div>
+              </div>
+
+              {/* Logout Button */}
+              <button
+                onClick={() => {
+                  setCurrentUser(null);
+                  setIsMobileMenuOpen(false);
+                }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200 cursor-pointer"
+              >
+                <div className="flex items-center justify-center shrink-0 w-5 h-5">
+                  <LogOut className="w-5 h-5 text-gray-400" />
+                </div>
+                <span className="truncate">Logout</span>
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* Sidebar Navigation - hidden on mobile, visible on medium screens and up */}
+      <aside className={`h-screen sticky top-0 hidden md:flex flex-col justify-between border-r border-gray-200 bg-white z-30 transition-all duration-300 shrink-0 ${isSidebarCollapsed ? 'w-20' : 'w-64'}`}>
         {/* Top part: Hamburger toggle and Logo */}
         <div className="p-4 flex flex-col gap-4 shrink-0">
           <div className="flex items-center gap-3">
@@ -1417,7 +1593,45 @@ Ensure the Excel format is correct and you have a stable internet connection.
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
-        <main className="flex-1 p-6 md:p-8 space-y-6 overflow-y-auto">
+        {/* Mobile Sticky Header */}
+        <header className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between md:hidden z-20 shadow-sm shrink-0">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer flex items-center justify-center"
+              title="Open Menu"
+            >
+              <Menu className="w-6 h-6" />
+            </button>
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center text-white font-bold shadow-md shadow-blue-200 text-xs">
+                <span>S</span>
+              </div>
+              <span className="text-sm font-bold text-gray-900 leading-none">SpareShare</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Cart shortcut on mobile header */}
+            {currentUser.role === 'user' && (
+              <button
+                onClick={() => setIsCartOpen(true)}
+                className="p-2 text-gray-500 hover:text-blue-600 rounded-lg relative cursor-pointer flex items-center justify-center"
+                title="View Cart"
+              >
+                <ShoppingCart className="w-5 h-5" />
+                {cartItems.length > 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border border-white"></span>
+                )}
+              </button>
+            )}
+            {/* Quick user avatar */}
+            <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-xs uppercase shadow-sm">
+              {currentUser.username.substring(0, 2)}
+            </div>
+          </div>
+        </header>
+
+        <main className="flex-1 p-4 md:p-8 space-y-6 overflow-y-auto">
 
         {/* State: No Data or Explicit Upload Mode (Only Admin can see upload modal) */}
         {(parts.length === 0 || showUploadModal) && currentUser.role === 'admin' ? (
