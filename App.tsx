@@ -483,12 +483,12 @@ const DashboardGuide: React.FC = () => {
 
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const savedUser = localStorage.getItem('spareshare_currentUser');
+    const savedUser = sessionStorage.getItem('spareshare_currentUser');
     if (savedUser) {
       try {
         return JSON.parse(savedUser);
       } catch (e) {
-        console.error("Failed to parse saved user from localStorage", e);
+        console.error("Failed to parse saved user from sessionStorage", e);
       }
     }
     return null;
@@ -559,14 +559,24 @@ function App() {
     }
   }, []);
 
-  // Sync current user with local storage
+  // Sync current user with session storage
   useEffect(() => {
     if (currentUser) {
-      localStorage.setItem('spareshare_currentUser', JSON.stringify(currentUser));
+      sessionStorage.setItem('spareshare_currentUser', JSON.stringify(currentUser));
     } else {
-      localStorage.removeItem('spareshare_currentUser');
+      sessionStorage.removeItem('spareshare_currentUser');
     }
   }, [currentUser]);
+
+  // Handle user logout and reset user-specific states
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setCartItems([]);
+    setIsMobileMenuOpen(false);
+    setIsCartOpen(false);
+    setIsChatOpen(false);
+    setActiveTab('dashboard');
+  };
 
   // Dashboard Sub-tabs
   const [dashboardSubTab, setDashboardSubTab] = useState<'overview' | 'consumption'>('overview');
@@ -1406,10 +1416,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
 
               {/* Logout Button */}
               <button
-                onClick={() => {
-                  setCurrentUser(null);
-                  setIsMobileMenuOpen(false);
-                }}
+                onClick={handleLogout}
                 className="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200 cursor-pointer"
               >
                 <div className="flex items-center justify-center shrink-0 w-5 h-5">
@@ -1577,7 +1584,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
 
           {/* Logout Button */}
           <button
-            onClick={() => setCurrentUser(null)}
+            onClick={handleLogout}
             className="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200 cursor-pointer"
             title={isSidebarCollapsed ? "Logout" : undefined}
           >
