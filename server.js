@@ -373,14 +373,21 @@ app.get(['/reconciliation-status', '/api/reconciliation-status'], async (req, re
     ];
 
     sheets.forEach(config => {
-      const worksheet = workbook.Sheets[config.name];
+      let worksheet = workbook.Sheets[config.name];
+      if (config.factory === 'Rocell Eheliyagoda') {
+        const rcleDataPath = path.join(process.cwd(), 'rcle_data_temp.xlsx');
+        if (fs.existsSync(rcleDataPath)) {
+          const rcleWorkbook = XLSX.read(rcleDataPath, { type: 'file' });
+          worksheet = rcleWorkbook.Sheets['GS June 2026'];
+        }
+      }
       if (!worksheet) return;
       const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
       const headers = rows[2] || [];
       
       const qtyIdx = headers.findIndex(h => String(h).toLowerCase().includes('qty') || String(h).toLowerCase().includes('quantity') || String(h).toLowerCase().includes('on hand'));
       const costIdx = headers.findIndex(h => String(h).toLowerCase() === 'unit cost' || String(h).toLowerCase() === 'price');
-      const valIdx = headers.findIndex(h => String(h).toLowerCase().includes('value') || String(h).toLowerCase().includes('total value'));
+      const valIdx = headers.findIndex(h => String(h).toLowerCase().includes('value') || String(h).toLowerCase().includes('total value') || String(h).toLowerCase().includes('inventory value'));
       
       let skus = 0;
       let value = 0;

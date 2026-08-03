@@ -20,9 +20,11 @@ const db = getFirestore(app);
 
 const masterUrl = 'https://docs.google.com/spreadsheets/d/1RmMDKC8tgSFz26jB9TGP9Tq4_g5WoMo86-SKOTzVH6U/export?format=xlsx';
 const rcleFsnUrl = 'https://docs.google.com/spreadsheets/d/1rJRHhBG5FoR89SMc-afmfGfXUHpJNjW0-bwYow9BjBM/export?format=xlsx';
+const rcleDataUrl = 'https://docs.google.com/spreadsheets/d/146d9NtVrYmqqIn-2wB9bjbbkZWkqtwX_dXaY3UeuQSI/export?format=xlsx';
 
 const masterPath = path.join(process.cwd(), 'user_sheet_temp.xlsx');
 const rcleFsnPath = path.join(process.cwd(), 'rcle_fsn_temp.xlsx');
+const rcleDataPath = path.join(process.cwd(), 'rcle_data_temp.xlsx');
 const imagesMapPath = path.join(process.cwd(), 'material_images.json');
 const reportPath = path.join(process.cwd(), 'uploads', 'missing_photos_report.json');
 const cachePath = path.join(process.cwd(), 'uploads', 'image_verification_cache.json');
@@ -133,6 +135,7 @@ function parseRcleFsn() {
 async function run() {
   await downloadFile('Master Inventory Spreadsheet', masterUrl, masterPath);
   await downloadFile('RCL-E FSN Classification Spreadsheet', rcleFsnUrl, rcleFsnPath);
+  await downloadFile('RCL-E Inventory Spreadsheet', rcleDataUrl, rcleDataPath);
   
   const rcleFsnMap = parseRcleFsn();
   
@@ -167,7 +170,13 @@ async function run() {
   ];
   
   sheetsConfig.forEach(config => {
-    const worksheet = workbook.Sheets[config.sheet];
+    let worksheet = workbook.Sheets[config.sheet];
+    if (config.factoryId === 'Rocell Eheliyagoda') {
+      console.log('Loading Rocell Eheliyagoda inventory from rcle_data_temp.xlsx [GS June 2026]...');
+      const rcleWorkbook = XLSX.read(rcleDataPath, { type: 'file' });
+      worksheet = rcleWorkbook.Sheets['GS June 2026'];
+    }
+    
     if (!worksheet) {
       console.error(`Sheet ${config.sheet} not found!`);
       return;
@@ -177,9 +186,9 @@ async function run() {
     // Headers are in index 2 (Row 3)
     const headers = rows[2] || [];
     
-    const matIdx = headers.findIndex(h => String(h).toLowerCase().includes('material'));
+    const matIdx = headers.findIndex(h => String(h).toLowerCase().includes('material') || String(h).toLowerCase().includes('item code') || String(h).toLowerCase() === 'code');
     const descIdx = headers.findIndex(h => String(h).toLowerCase().includes('description'));
-    const uomIdx = headers.findIndex(h => String(h).toLowerCase().includes('uom') || String(h).toLowerCase() === 'unit of measure');
+    const uomIdx = headers.findIndex(h => String(h).toLowerCase().includes('uom') || String(h).toLowerCase() === 'unit of measure' || String(h).toLowerCase().includes('primary unit of measure') || String(h).toLowerCase() === 'unit');
     const qtyIdx = headers.findIndex(h => String(h).toLowerCase().includes('qty') || String(h).toLowerCase().includes('quantity') || String(h).toLowerCase().includes('on hand'));
     const costIdx = headers.findIndex(h => String(h).toLowerCase() === 'unit cost' || String(h).toLowerCase() === 'price');
     const valIdx = headers.findIndex(h => String(h).toLowerCase().includes('value') || String(h).toLowerCase().includes('total value'));
