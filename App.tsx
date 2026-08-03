@@ -1283,9 +1283,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
             <div className="p-4 flex flex-col gap-4 shrink-0">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center text-white font-bold shadow-md shadow-blue-200">
-                    <span className="text-base">S</span>
-                  </div>
+                  <img src="/images/spare-parts-logo.png" alt="SpareShare Logo" className="w-8 h-8 rounded-lg object-contain" />
                   <div>
                     <h1 className="text-sm font-bold text-gray-900 leading-none">SpareShare</h1>
                     <p className="text-[9px] uppercase tracking-wider text-gray-400 font-bold mt-0.5">
@@ -1443,9 +1441,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
             </button>
             {!isSidebarCollapsed && (
               <div className="flex items-center gap-3 animate-in fade-in duration-200">
-                <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center text-white font-bold shadow-md shadow-blue-200">
-                  <span className="text-base">S</span>
-                </div>
+                <img src="/images/spare-parts-logo.png" alt="SpareShare Logo" className="w-8 h-8 rounded-lg object-contain" />
                 <div>
                   <h1 className="text-sm font-bold text-gray-900 leading-none">SpareShare</h1>
                   <p className="text-[9px] uppercase tracking-wider text-gray-400 font-bold mt-0.5">
@@ -1611,9 +1607,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
               <Menu className="w-6 h-6" />
             </button>
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center text-white font-bold shadow-md shadow-blue-200 text-xs">
-                <span>S</span>
-              </div>
+              <img src="/images/spare-parts-logo.png" alt="SpareShare Logo" className="w-7 h-7 rounded-lg object-contain" />
               <span className="text-sm font-bold text-gray-900 leading-none">SpareShare</span>
             </div>
           </div>
