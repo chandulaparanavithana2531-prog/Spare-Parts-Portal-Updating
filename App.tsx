@@ -907,8 +907,10 @@ function App() {
         getUploadHistory()
       ]);
 
-      // 3. Merge and deduplicate
-      const { parts: mergedParts, removedDuplicatesCount } = mergeAndDeduplicate(localData, backendData);
+      // 3. Prioritize local backend server database (db.json) over Firestore when available
+      // to resolve cloud quota limits and ensure 100% parity with Google Sheets
+      const mergedParts = (partsSource === 'backend' && backendData.length > 0) ? backendData : localData;
+      const removedDuplicatesCount = (partsSource === 'backend' && backendData.length > 0) ? 0 : mergeAndDeduplicate(localData, backendData).removedDuplicatesCount;
 
       // Dynamically attach image URLs if missing or old Google Drive formats
       const enrichedParts = mergedParts.map(part => {
