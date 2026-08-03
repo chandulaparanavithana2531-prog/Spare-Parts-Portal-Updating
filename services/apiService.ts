@@ -108,30 +108,50 @@ export async function fetchBackendParts(factoryAffiliation?: string): Promise<Fe
     if (factoryAffiliation) {
       headers['x-factory-affiliation'] = factoryAffiliation;
     }
-    let response = await fetchWithTimeout(`${API_URL}/parts`, { headers });
+    let response = await fetchWithTimeout(`${API_URL}/parts`, { headers, timeout: 5000 });
     if (!response.ok) {
       console.log(`[API] /parts returned ${response.status}, trying /api/parts...`);
-      response = await fetchWithTimeout(`${API_URL}/api/parts`, { headers });
+      response = await fetchWithTimeout(`${API_URL}/api/parts`, { headers, timeout: 5000 });
     }
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+    if (response.ok) {
+      const data = await response.json();
+      return {
+        parts: Array.isArray(data) ? data : [],
+        source: 'backend'
+      };
     }
-    const data = await response.json();
-    return {
-      parts: Array.isArray(data) ? data : [],
-      source: 'backend'
-    };
-  } catch (error) {
-    console.warn(`[API] Backend parts fetch failed. Using fallback mock data. Error:`, error);
-    let parts = MOCK_BACKEND_PARTS;
-    if (factoryAffiliation) {
-      parts = parts.filter(p => p.factoryId === factoryAffiliation);
-    }
-    return {
-      parts,
-      source: 'fallback'
-    };
+  } catch (error: any) {
+    console.warn(`[API] Express backend parts fetch failed: ${error.message}. Trying public/parts.json static asset fallback...`);
   }
+
+  // Fallback to static parts.json asset
+  try {
+    console.log(`[API] Fetching parts from static public asset /parts.json...`);
+    const response = await fetchWithTimeout(`/parts.json`, { timeout: 25000 });
+    if (response.ok) {
+      let data = await response.json();
+      if (Array.isArray(data)) {
+        if (factoryAffiliation) {
+          data = data.filter((p: SparePart) => p.factoryId === factoryAffiliation);
+        }
+        return {
+          parts: data,
+          source: 'backend'
+        };
+      }
+    }
+  } catch (error: any) {
+    console.warn(`[API] Static parts.json fallback fetch failed: ${error.message}. Using fallback mock data.`);
+  }
+
+  let parts = MOCK_BACKEND_PARTS;
+  if (factoryAffiliation) {
+    parts = parts.filter(p => p.factoryId === factoryAffiliation);
+  }
+  return {
+    parts,
+    source: 'fallback'
+  };
 }
 
 /**

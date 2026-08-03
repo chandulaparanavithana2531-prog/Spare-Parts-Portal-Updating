@@ -318,6 +318,11 @@ async function run() {
   fs.writeFileSync(dbJsonPath, JSON.stringify(allParts, null, 2), 'utf8');
   console.log(`\nSUCCESS: Saved ${allParts.length} parts to local db.json.`);
   
+  // Write minified public/parts.json static asset fallback
+  const publicPartsPath = path.join(process.cwd(), 'public', 'parts.json');
+  fs.writeFileSync(publicPartsPath, JSON.stringify(allParts), 'utf8');
+  console.log(`SUCCESS: Saved minified public/parts.json fallback asset.`);
+  
   // Write Missing Photos Report
   fs.writeFileSync(reportPath, JSON.stringify(missingPhotosList, null, 2), 'utf8');
   console.log(`SUCCESS: Logged ${missingPhotosList.length} items to missing_photos_report.json.`);
