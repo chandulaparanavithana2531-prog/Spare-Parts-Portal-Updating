@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { SparePart, User } from '../types';
-import { X, MapPin, Package, Settings, DollarSign, Calendar, Tag, Factory, Upload, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { X, MapPin, Package, Settings, DollarSign, Calendar, Tag, Factory, Upload, Loader2, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import { saveInventory } from '../services/db';
 import { storage } from '../services/firebase';
 import { ref, uploadBytes, getDownloadURL, uploadString } from 'firebase/storage';
@@ -181,6 +181,20 @@ export const ItemDetailsModal: React.FC<ItemDetailsModalProps> = ({ part, reserv
                             <span className="px-2 py-0.5 text-xs font-bold bg-blue-100 text-blue-700 rounded uppercase tracking-wide">
                                 {part.spareType}
                             </span>
+                            {(() => {
+                                const fsn = part.fsnClassification || 'Non-moving';
+                                let badgeClass = 'bg-red-100 text-red-700 border border-red-200';
+                                if (fsn === 'Fast') {
+                                    badgeClass = 'bg-green-100 text-green-700 border border-green-200';
+                                } else if (fsn === 'Slow') {
+                                    badgeClass = 'bg-amber-100 text-amber-700 border border-amber-200';
+                                }
+                                return (
+                                    <span className={`px-2 py-0.5 text-xs font-bold rounded uppercase tracking-wide border ${badgeClass}`}>
+                                        FSN: {fsn}
+                                    </span>
+                                );
+                            })()}
                             <span className="text-xs text-gray-500 font-mono">{part.id}</span>
                         </div>
                         <h2 className="text-xl font-bold text-gray-900 leading-tight">{part.description}</h2>
@@ -190,8 +204,16 @@ export const ItemDetailsModal: React.FC<ItemDetailsModalProps> = ({ part, reserv
                     </button>
                 </div>
 
-                {/* content */}
                 <div className="p-6 overflow-y-auto space-y-6">
+                    {part.photoPending && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-3 text-amber-800 animate-pulse">
+                            <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+                            <div>
+                                <h4 className="text-xs font-black uppercase tracking-wider">Product photo upload pending</h4>
+                                <p className="text-xs mt-0.5 font-medium">The product image link for this item is currently missing or broken. Please edit the link or contact Admin to upload.</p>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Image Banner (if exists) */}
                     {imageUrls.length > 0 ? (

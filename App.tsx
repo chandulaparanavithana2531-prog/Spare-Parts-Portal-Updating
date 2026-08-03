@@ -900,10 +900,10 @@ function App() {
         { records: histRecords },
         historyLogs
       ] = await Promise.all([
-        getInventory(),
-        fetchBackendParts(),
+        getInventory(currentUser),
+        fetchBackendParts(currentUser?.role === 'admin' ? undefined : currentUser?.factoryAffiliation),
         fetchBackendFactories(),
-        fetchHistoricalConsumption(),
+        fetchHistoricalConsumption(currentUser?.role === 'admin' ? undefined : currentUser?.factoryAffiliation),
         getUploadHistory()
       ]);
 
@@ -1096,6 +1096,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
   const [categoryFilter, setCategoryFilter] = useState<string>('');
   const [criticalityFilter, setCriticalityFilter] = useState<string>('');
   const [imageFilter, setImageFilter] = useState<string>('all');
+  const [fsnFilter, setFsnFilter] = useState<string>('');
 
   const filteredParts = useMemo(() => {
     let result = parts;
@@ -1103,6 +1104,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
     // Apply Facilitated Filters
     if (factoryFilter) result = result.filter(p => p.factoryId === factoryFilter);
     if (categoryFilter) result = result.filter(p => p.categoryName === categoryFilter);
+    if (fsnFilter) result = result.filter(p => p.fsnClassification === fsnFilter);
     if (criticalityFilter) {
       result = result.filter(p => {
         const raw = (p.criticality || '').trim().toLowerCase();
@@ -1151,7 +1153,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
       .filter(item => item.score > 0)
       .sort((a, b) => b.score - a.score)
       .map(item => item.part);
-  }, [parts, searchQuery, factoryFilter, categoryFilter, criticalityFilter, imageFilter]);
+  }, [parts, searchQuery, factoryFilter, categoryFilter, criticalityFilter, imageFilter, fsnFilter]);
 
   const handleExportCSV = () => {
     if (filteredParts.length === 0) return;
@@ -2077,6 +2079,20 @@ Ensure the Excel format is correct and you have a stable internet connection.
                 </div>
 
                 <div className="flex items-center gap-2 px-3 py-1.5 bg-white/80 rounded-xl border border-gray-200 shadow-tiny overflow-hidden max-w-[200px]">
+                  <span className="text-[10px] font-black uppercase text-gray-400 shrink-0">FSN:</span>
+                  <select 
+                    value={fsnFilter}
+                    onChange={(e) => setFsnFilter(e.target.value)}
+                    className="text-xs font-bold text-gray-700 bg-transparent outline-none focus:ring-0 border-none cursor-pointer truncate"
+                  >
+                    <option value="">All FSN</option>
+                    <option value="Fast">Fast (F)</option>
+                    <option value="Slow">Slow (S)</option>
+                    <option value="Non-moving">Non-moving (N)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-white/80 rounded-xl border border-gray-200 shadow-tiny overflow-hidden max-w-[200px]">
                   <span className="text-[10px] font-black uppercase text-gray-400 shrink-0">Has Image:</span>
                   <select 
                     value={imageFilter}
@@ -2089,9 +2105,9 @@ Ensure the Excel format is correct and you have a stable internet connection.
                   </select>
                 </div>
 
-                {(factoryFilter || categoryFilter || criticalityFilter || imageFilter !== 'all') && (
+                {(factoryFilter || categoryFilter || criticalityFilter || imageFilter !== 'all' || fsnFilter) && (
                   <button 
-                    onClick={() => { setFactoryFilter(''); setCategoryFilter(''); setCriticalityFilter(''); setImageFilter('all'); }}
+                    onClick={() => { setFactoryFilter(''); setCategoryFilter(''); setCriticalityFilter(''); setImageFilter('all'); setFsnFilter(''); }}
                     className="text-[10px] font-black uppercase text-red-500 hover:text-red-600 px-3 transition-colors"
                   >
                     Clear Filters
@@ -2157,12 +2173,14 @@ Ensure the Excel format is correct and you have a stable internet connection.
 
                       {dashboardSubTab === 'overview' ? (
                         <DashboardStats 
-                          parts={filteredParts} 
+                          parts={parts} 
                           onFilterChange={(type, value) => {
                             if (type === 'factory') setFactoryFilter(value);
                             if (type === 'criticality') setCriticalityFilter(value);
+                            if (type === 'fsn') setFsnFilter(value);
                             setActiveTab('inventory');
                           }}
+                          currentUser={currentUser}
                         />
                       ) : (
                         <DashboardConsumptionView parts={parts} historicalConsumption={historicalConsumption} />

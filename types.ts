@@ -21,6 +21,8 @@ export interface SparePart {
   criticality?: string;
   consumptionQty?: number;
   consumptionValue?: number;
+  fsnClassification?: 'Fast' | 'Slow' | 'Non-moving';
+  photoPending?: boolean;
 }
 
 export interface CartItem extends SparePart {
@@ -45,7 +47,8 @@ export enum SortField {
   FACTORY = 'factoryId',
   SPARE_TYPE = 'spareType',
   CATEGORY = 'categoryName',
-  CRITICALITY = 'criticality'
+  CRITICALITY = 'criticality',
+  FSN = 'fsnClassification'
 }
 
 export enum SortDirection {

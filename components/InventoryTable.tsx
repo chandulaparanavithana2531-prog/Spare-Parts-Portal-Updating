@@ -377,6 +377,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
               <HeaderCell field={SortField.PART_NUMBER} label="Part No" />
               <HeaderCell field={SortField.DESCRIPTION} label="Description" className="min-w-[200px]" />
               <HeaderCell field={SortField.CRITICALITY} label="Criticality" />
+              <HeaderCell field={SortField.FSN} label="FSN" />
               <HeaderCell field={SortField.MACHINE} label="Machine" />
               <HeaderCell field={SortField.CATEGORY} label="Sub Category" />
               <HeaderCell field={SortField.ON_HAND} label="Available" align="right" />
@@ -407,7 +408,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                     <td className="px-4 py-3 whitespace-nowrap">
                       {part.imageUrl || part.image_url ? (
                         <div 
-                          className="w-[60px] h-[60px] rounded-xl overflow-hidden border border-gray-250 shadow-sm relative group cursor-pointer hover:scale-105 transition-all duration-200 flex items-center justify-center bg-gray-50 flex-shrink-0"
+                          className={`w-[60px] h-[60px] rounded-xl overflow-hidden border shadow-sm relative group cursor-pointer hover:scale-105 transition-all duration-200 flex items-center justify-center bg-gray-50 flex-shrink-0 ${part.photoPending ? 'border-yellow-400' : 'border-gray-250'}`}
                           onClick={() => handleViewDetails(part)}
                           title="Click to view details & photos"
                         >
@@ -421,14 +422,22 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                               e.currentTarget.src = 'https://placehold.co/100x100?text=No+Image';
                             }}
                           />
+                          {part.photoPending && (
+                            <span className="absolute bottom-0 left-0 right-0 bg-yellow-500 text-white text-[8px] font-black uppercase text-center py-0.5 tracking-wider shadow">
+                              Pending
+                            </span>
+                          )}
                         </div>
                       ) : (
                         <div 
-                          className="w-[60px] h-[60px] bg-gray-50 border border-dashed border-gray-300 rounded-xl flex items-center justify-center text-gray-400 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50/50 transition-all cursor-pointer flex-shrink-0"
+                          className="w-[60px] h-[60px] bg-gray-50 border border-dashed border-yellow-400 rounded-xl flex items-center justify-center text-gray-400 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50/50 transition-all cursor-pointer flex-shrink-0 relative"
                           onClick={() => onEditItem(part)}
                           title={currentUser.role === 'admin' ? "Upload photo" : "Request photo upload"}
                         >
-                          <ImageIcon className="w-6 h-6 text-gray-400" />
+                          <ImageIcon className="w-6 h-6 text-yellow-550" />
+                          <span className="absolute bottom-0 left-0 right-0 bg-yellow-500 text-white text-[8px] font-black uppercase text-center py-0.5 tracking-wider shadow rounded-b-xl">
+                            Pending
+                          </span>
                         </div>
                       )}
                     </td>
@@ -475,6 +484,22 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                         return (
                           <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${badgeClass}`}>
                             {label}
+                          </span>
+                        );
+                      })()}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-gray-600">
+                      {(() => {
+                        const fsn = part.fsnClassification || 'Non-moving';
+                        let badgeClass = 'bg-red-100 text-red-700 border border-red-200';
+                        if (fsn === 'Fast') {
+                          badgeClass = 'bg-green-100 text-green-700 border border-green-200';
+                        } else if (fsn === 'Slow') {
+                          badgeClass = 'bg-amber-100 text-amber-700 border border-amber-200';
+                        }
+                        return (
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${badgeClass}`}>
+                            {fsn}
                           </span>
                         );
                       })()}

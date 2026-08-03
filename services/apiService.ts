@@ -101,13 +101,17 @@ export interface FetchFactoriesResponse {
  * Tries endpoint routes '/parts' and '/api/parts' sequentially.
  * Falls back to high-quality mock data if backend server is unreachable.
  */
-export async function fetchBackendParts(): Promise<FetchPartsResponse> {
+export async function fetchBackendParts(factoryAffiliation?: string): Promise<FetchPartsResponse> {
   try {
     console.log(`[API] Fetching parts from ${API_URL}/parts...`);
-    let response = await fetchWithTimeout(`${API_URL}/parts`);
+    const headers: Record<string, string> = {};
+    if (factoryAffiliation) {
+      headers['x-factory-affiliation'] = factoryAffiliation;
+    }
+    let response = await fetchWithTimeout(`${API_URL}/parts`, { headers });
     if (!response.ok) {
       console.log(`[API] /parts returned ${response.status}, trying /api/parts...`);
-      response = await fetchWithTimeout(`${API_URL}/api/parts`);
+      response = await fetchWithTimeout(`${API_URL}/api/parts`, { headers });
     }
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -119,8 +123,12 @@ export async function fetchBackendParts(): Promise<FetchPartsResponse> {
     };
   } catch (error) {
     console.warn(`[API] Backend parts fetch failed. Using fallback mock data. Error:`, error);
+    let parts = MOCK_BACKEND_PARTS;
+    if (factoryAffiliation) {
+      parts = parts.filter(p => p.factoryId === factoryAffiliation);
+    }
     return {
-      parts: MOCK_BACKEND_PARTS,
+      parts,
       source: 'fallback'
     };
   }
@@ -237,16 +245,20 @@ export function mergeAndDeduplicate(localParts: SparePart[], backendParts: Spare
  * Fetches historical consumption records from the backend server.
  * Falls back to direct Firestore fetching (which has local seeder) if backend is offline.
  */
-export async function fetchHistoricalConsumption(): Promise<{
+export async function fetchHistoricalConsumption(factoryAffiliation?: string): Promise<{
   records: HistoricalConsumptionRecord[];
   source: 'backend' | 'fallback';
 }> {
   try {
     console.log(`[API] Fetching historical consumption from ${API_URL}/historical-consumption...`);
-    let response = await fetchWithTimeout(`${API_URL}/historical-consumption`);
+    const headers: Record<string, string> = {};
+    if (factoryAffiliation) {
+      headers['x-factory-affiliation'] = factoryAffiliation;
+    }
+    let response = await fetchWithTimeout(`${API_URL}/historical-consumption`, { headers });
     if (!response.ok) {
       console.log(`[API] /historical-consumption returned ${response.status}, trying /api/historical-consumption...`);
-      response = await fetchWithTimeout(`${API_URL}/api/historical-consumption`);
+      response = await fetchWithTimeout(`${API_URL}/api/historical-consumption`, { headers });
     }
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -259,7 +271,12 @@ export async function fetchHistoricalConsumption(): Promise<{
   } catch (error) {
     console.warn(`[API] Backend historical consumption fetch failed. Using fallback client database. Error:`, error);
     // Fetch directly from Firestore (which triggers local seeder if empty)
-    const localRecords = await getHistoricalConsumption();
+    const localRecords = await getHistoricalConsumption({
+      username: '',
+      role: 'user',
+      approved: true,
+      factoryAffiliation
+    });
     return {
       records: localRecords,
       source: 'fallback'

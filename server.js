@@ -178,15 +178,22 @@ function normalizeImageUrl(url) {
 
 // REST endpoints for catalog and factories matching frontend expectations
 app.get(['/parts', '/api/parts'], async (req, res) => {
+  const userFactory = req.headers['x-factory-affiliation'];
+  
   // Check if we have a local db.json file containing migrated parts
   try {
     const dbJsonPath = path.join(process.cwd(), 'db.json');
     console.log(`[Server] Checking for local db.json at: ${dbJsonPath}`);
     if (fs.existsSync(dbJsonPath)) {
       console.log(`[Server] db.json exists, parsing...`);
-      const localData = JSON.parse(fs.readFileSync(dbJsonPath, 'utf8'));
+      let localData = JSON.parse(fs.readFileSync(dbJsonPath, 'utf8'));
       if (Array.isArray(localData) && localData.length > 0) {
-        console.log(`[Server] Serving ${localData.length} parts from local db.json.`);
+        console.log(`[Server] Serving parts from local db.json. Factory filter: ${userFactory}`);
+        
+        if (userFactory && userFactory !== 'admin' && userFactory !== 'undefined') {
+          localData = localData.filter(part => part.factoryId === userFactory);
+        }
+        
         const enriched = localData.map(part => {
           let imageUrl = part.imageUrl;
           let image_url = part.image_url;
@@ -217,7 +224,11 @@ app.get(['/parts', '/api/parts'], async (req, res) => {
 
   if (firestoreDb) {
     try {
-      const snapshot = await firestoreDb.collection('inventory').get();
+      let queryRef = firestoreDb.collection('inventory');
+      if (userFactory && userFactory !== 'admin' && userFactory !== 'undefined') {
+        queryRef = queryRef.where('factoryId', '==', userFactory);
+      }
+      const snapshot = await queryRef.get();
       const parts = [];
       snapshot.forEach(doc => {
         const data = doc.data();
@@ -341,12 +352,124 @@ app.get(['/factories', '/api/factories'], (req, res) => {
   ]);
 });
 
+// Endpoint for data reconciliation status between sheet and portal DB
+app.get(['/reconciliation-status', '/api/reconciliation-status'], async (req, res) => {
+  try {
+    const filepath = path.join(process.cwd(), 'user_sheet_temp.xlsx');
+    if (!fs.existsSync(filepath)) {
+      return res.status(404).json({ success: false, message: 'Spreadsheet not found on server' });
+    }
+    const workbook = XLSX.read(filepath, { type: 'file' });
+    
+    let sheetSkuTotal = 0;
+    let sheetValueTotal = 0;
+    const breakdown = {};
+
+    const sheets = [
+      { name: 'LT - Inventory', factory: 'Lanka Tiles' },
+      { name: 'LWT - Inventory', factory: 'Lanka Wall Tiles' },
+      { name: 'RCL-H - Inventory', factory: 'Rocell Horana' },
+      { name: 'RCL-E - Inventory', factory: 'Rocell Eheliyagoda' }
+    ];
+
+    sheets.forEach(config => {
+      const worksheet = workbook.Sheets[config.name];
+      if (!worksheet) return;
+      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      const headers = rows[2] || [];
+      
+      const qtyIdx = headers.findIndex(h => String(h).toLowerCase().includes('qty') || String(h).toLowerCase().includes('quantity') || String(h).toLowerCase().includes('on hand'));
+      const costIdx = headers.findIndex(h => String(h).toLowerCase() === 'unit cost' || String(h).toLowerCase() === 'price');
+      const valIdx = headers.findIndex(h => String(h).toLowerCase().includes('value') || String(h).toLowerCase().includes('total value'));
+      
+      let skus = 0;
+      let value = 0;
+      for (let r = 3; r < rows.length; r++) {
+        const row = rows[r];
+        if (!row || !row[0]) continue;
+        skus++;
+        const qty = parseFloat(row[qtyIdx]) || 0;
+        if (config.factory === 'Lanka Tiles') {
+          // Lanka Tiles value is 0
+        } else if (config.factory === 'Lanka Wall Tiles') {
+          value += valIdx !== -1 ? parseFloat(row[valIdx]) || 0 : 0;
+        } else {
+          value += valIdx !== -1 ? parseFloat(row[valIdx]) || 0 : (qty * (costIdx !== -1 ? parseFloat(row[costIdx]) || 0 : 0));
+        }
+      }
+      breakdown[config.factory] = { skus, value };
+      sheetSkuTotal += skus;
+      sheetValueTotal += value;
+    });
+
+    const dbJsonPath = path.join(process.cwd(), 'db.json');
+    let dbParts = [];
+    if (fs.existsSync(dbJsonPath)) {
+      dbParts = JSON.parse(fs.readFileSync(dbJsonPath, 'utf8'));
+    }
+    
+    let dbSkuTotal = 0;
+    let dbValueTotal = 0;
+    const dbBreakdown = {};
+    
+    dbParts.forEach(p => {
+      if (!dbBreakdown[p.factoryId]) {
+        dbBreakdown[p.factoryId] = { skus: 0, value: 0 };
+      }
+      dbBreakdown[p.factoryId].skus++;
+      dbBreakdown[p.factoryId].value += p.totalValue || 0;
+      dbSkuTotal++;
+      dbValueTotal += p.totalValue || 0;
+    });
+
+    const isMatched = dbSkuTotal === sheetSkuTotal && Math.abs(dbValueTotal - sheetValueTotal) < 1.0;
+
+    res.json({
+      success: true,
+      sheetTotals: {
+        skus: sheetSkuTotal,
+        value: Math.round(sheetValueTotal),
+        breakdown
+      },
+      portalTotals: {
+        skus: dbSkuTotal,
+        value: Math.round(dbValueTotal),
+        breakdown: dbBreakdown
+      },
+      isMatched,
+      percentageMatched: isMatched ? 100 : Math.round((dbSkuTotal / sheetSkuTotal) * 100)
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Endpoint to fetch missing photos report
+app.get(['/missing-photos-report', '/api/missing-photos-report'], (req, res) => {
+  try {
+    const reportPath = path.join(process.cwd(), 'uploads', 'missing_photos_report.json');
+    if (fs.existsSync(reportPath)) {
+      const data = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+      res.json(data);
+    } else {
+      res.json([]);
+    }
+  } catch (err) {
+    res.status(500).send(`Internal server error: ${err.message}`);
+  }
+});
+
 // REST endpoints for historical consumption
 app.get(['/historical-consumption', '/api/historical-consumption'], async (req, res) => {
+  const userFactory = req.headers['x-factory-affiliation'];
+  let records = [];
   if (firestoreDb) {
     try {
-      const snapshot = await firestoreDb.collection('historical_consumption').get();
-      const records = [];
+      let queryRef = firestoreDb.collection('historical_consumption');
+      if (userFactory && userFactory !== 'admin' && userFactory !== 'undefined') {
+        queryRef = queryRef.where('factoryId', '==', userFactory);
+      }
+      const snapshot = await queryRef.get();
       snapshot.forEach(doc => {
         records.push(doc.data());
       });
@@ -358,7 +481,11 @@ app.get(['/historical-consumption', '/api/historical-consumption'], async (req, 
     }
   }
   // Fallback to memory
-  res.json(memoryHistoricalRecords);
+  let filteredMemory = memoryHistoricalRecords;
+  if (userFactory && userFactory !== 'admin' && userFactory !== 'undefined') {
+    filteredMemory = filteredMemory.filter(r => r.factoryId === userFactory);
+  }
+  res.json(filteredMemory);
 });
 
 // POST endpoint for 3-Year History Excel/CSV Import

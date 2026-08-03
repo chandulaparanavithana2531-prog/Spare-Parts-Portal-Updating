@@ -136,9 +136,16 @@ export const saveInventory = async (parts: SparePart[], performerUsername: strin
   }
 };
 
-export const getInventory = async (): Promise<SparePart[]> => {
+export const getInventory = async (user?: User): Promise<SparePart[]> => {
   try {
-    const querySnapshot = await getDocs(collection(db, 'inventory'));
+    let querySnapshot;
+    if (user && user.role !== 'admin' && user.factoryAffiliation) {
+      const q = query(collection(db, 'inventory'), where('factoryId', '==', user.factoryAffiliation));
+      querySnapshot = await getDocs(q);
+    } else {
+      querySnapshot = await getDocs(collection(db, 'inventory'));
+    }
+    
     const parts: SparePart[] = [];
     querySnapshot.forEach((doc) => {
       parts.push(doc.data() as SparePart);
@@ -154,7 +161,11 @@ export const getInventory = async (): Promise<SparePart[]> => {
     console.warn("[DB Fallback] getInventory failed to read from Firestore (Quota Exceeded). Utilizing local storage copy. Error:", error.message);
     try {
       const local = localStorage.getItem('spareshare_inventory');
-      return local ? JSON.parse(local) : [];
+      let localParts: SparePart[] = local ? JSON.parse(local) : [];
+      if (user && user.role !== 'admin' && user.factoryAffiliation) {
+        localParts = localParts.filter(p => p.factoryId === user.factoryAffiliation);
+      }
+      return localParts;
     } catch (e) {
       console.error("[DB Fallback] Failed to read from localStorage:", e);
       return [];
@@ -933,7 +944,7 @@ export const seedMockHistoricalConsumption = async (): Promise<HistoricalConsump
   return mockRecords;
 };
 
-export const getHistoricalConsumption = async (): Promise<HistoricalConsumptionRecord[]> => {
+export const getHistoricalConsumption = async (user?: User): Promise<HistoricalConsumptionRecord[]> => {
   try {
     const querySnapshot = await getDocs(collection(db, 'historical_consumption'));
     const records: HistoricalConsumptionRecord[] = [];
@@ -942,7 +953,14 @@ export const getHistoricalConsumption = async (): Promise<HistoricalConsumptionR
     });
     if (records.length === 0) {
       console.log("[DB] No historical consumption found. Seeding mock data...");
-      return await seedMockHistoricalConsumption();
+      const seeded = await seedMockHistoricalConsumption();
+      if (user && user.role !== 'admin' && user.factoryAffiliation) {
+        return seeded.filter(r => r.factoryId === user.factoryAffiliation);
+      }
+      return seeded;
+    }
+    if (user && user.role !== 'admin' && user.factoryAffiliation) {
+      return records.filter(r => r.factoryId === user.factoryAffiliation);
     }
     return records;
   } catch (error) {
