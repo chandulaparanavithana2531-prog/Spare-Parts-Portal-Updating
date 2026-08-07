@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import XLSX from 'xlsx';
 
-const url = 'https://docs.google.com/spreadsheets/d/1RmMDKC8tgSFz26jB9TGP9Tq4_g5WoMo86-SKOTzVH6U/export?format=xlsx';
+const url = 'https://docs.google.com/spreadsheets/d/1EzsyACHF2VPOmP_oXYrTmZ-dV7F3XMQjOn1Qh0ocfJc/export?format=xlsx';
 const dest = path.join(process.cwd(), 'user_sheet_temp.xlsx');
 
 async function run() {

@@ -18,7 +18,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-const masterUrl = 'https://docs.google.com/spreadsheets/d/1RmMDKC8tgSFz26jB9TGP9Tq4_g5WoMo86-SKOTzVH6U/export?format=xlsx';
+const masterUrl = 'https://docs.google.com/spreadsheets/d/1EzsyACHF2VPOmP_oXYrTmZ-dV7F3XMQjOn1Qh0ocfJc/export?format=xlsx';
 const rcleFsnUrl = 'https://docs.google.com/spreadsheets/d/1rJRHhBG5FoR89SMc-afmfGfXUHpJNjW0-bwYow9BjBM/export?format=xlsx';
 const rcleDataUrl = 'https://docs.google.com/spreadsheets/d/146d9NtVrYmqqIn-2wB9bjbbkZWkqtwX_dXaY3UeuQSI/export?format=xlsx';
 
@@ -183,8 +183,15 @@ async function run() {
     }
     
     const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-    // Headers are in index 2 (Row 3)
-    const headers = rows[2] || [];
+    // Find headers by looking for "material", "item code", or similar
+    let headerRowIdx = 2; // Default to row index 2
+    for (let r = 0; r < Math.min(10, rows.length); r++) {
+      if (rows[r] && rows[r].some(cell => String(cell).toLowerCase().includes('material') || String(cell).toLowerCase().includes('item code') || String(cell).toLowerCase() === 'code')) {
+        headerRowIdx = r;
+        break;
+      }
+    }
+    const headers = rows[headerRowIdx] || [];
     
     const matIdx = headers.findIndex(h => String(h).toLowerCase().includes('material') || String(h).toLowerCase().includes('item code') || String(h).toLowerCase() === 'code');
     const descIdx = headers.findIndex(h => String(h).toLowerCase().includes('description'));
@@ -195,10 +202,11 @@ async function run() {
     const fsnIdx = headers.findIndex(h => String(h).toLowerCase() === 'fsn' || String(h).toLowerCase() === 'fsn_classification');
     
     console.log(`\nParsing Sheet: ${config.sheet}`);
+    console.log(`Header Row Index: ${headerRowIdx}`);
     console.log(`Indices -> mat: ${matIdx}, desc: ${descIdx}, uom: ${uomIdx}, qty: ${qtyIdx}, cost: ${costIdx}, val: ${valIdx}, fsn: ${fsnIdx}`);
     
     let sheetSkuCount = 0;
-    for (let r = 3; r < rows.length; r++) {
+    for (let r = headerRowIdx + 1; r < rows.length; r++) {
       const row = rows[r];
       if (!row || row.length === 0) continue;
       const rawMat = row[matIdx];
@@ -212,10 +220,7 @@ async function run() {
       let unitCost = 0;
       let totalValue = 0;
       
-      if (config.factoryId === 'Lanka Tiles') {
-        unitCost = 0;
-        totalValue = 0;
-      } else if (config.factoryId === 'Lanka Wall Tiles') {
+      if (config.factoryId === 'Lanka Tiles' || config.factoryId === 'Lanka Wall Tiles') {
         totalValue = valIdx !== -1 ? parseFloat(row[valIdx]) || 0 : 0;
         unitCost = onHand > 0 ? totalValue / onHand : 0;
       } else {

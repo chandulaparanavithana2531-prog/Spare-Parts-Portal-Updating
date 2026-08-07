@@ -40,7 +40,15 @@ function runVerification() {
     if (!worksheet) return;
     
     const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-    const headers = rows[2] || [];
+    // Find headers by looking for "material", "item code", or similar
+    let headerRowIdx = 2; // Default to row index 2
+    for (let r = 0; r < Math.min(10, rows.length); r++) {
+      if (rows[r] && rows[r].some(cell => String(cell).toLowerCase().includes('material') || String(cell).toLowerCase().includes('item code') || String(cell).toLowerCase() === 'code')) {
+        headerRowIdx = r;
+        break;
+      }
+    }
+    const headers = rows[headerRowIdx] || [];
     
     const qtyIdx = headers.findIndex(h => String(h).toLowerCase().includes('qty') || String(h).toLowerCase().includes('quantity') || String(h).toLowerCase().includes('on hand'));
     const costIdx = headers.findIndex(h => String(h).toLowerCase() === 'unit cost' || String(h).toLowerCase() === 'price');
@@ -49,14 +57,12 @@ function runVerification() {
     let skus = 0;
     let value = 0;
     
-    for (let r = 3; r < rows.length; r++) {
+    for (let r = headerRowIdx + 1; r < rows.length; r++) {
       const row = rows[r];
       if (!row || !row[0]) continue;
       skus++;
       const qty = parseFloat(row[qtyIdx]) || 0;
-      if (config.factory === 'Lanka Tiles') {
-        // Lanka Tiles value is 0
-      } else if (config.factory === 'Lanka Wall Tiles') {
+      if (config.factory === 'Lanka Tiles' || config.factory === 'Lanka Wall Tiles') {
         value += valIdx !== -1 ? parseFloat(row[valIdx]) || 0 : 0;
       } else {
         value += valIdx !== -1 ? parseFloat(row[valIdx]) || 0 : (qty * (costIdx !== -1 ? parseFloat(row[costIdx]) || 0 : 0));
