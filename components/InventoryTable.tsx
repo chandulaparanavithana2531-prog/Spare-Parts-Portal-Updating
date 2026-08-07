@@ -11,14 +11,33 @@ interface InventoryTableProps {
   onDataChange: () => void;
   cartItems: CartItem[];
   onAddToCart: (part: SparePart) => void;
+  allParts: SparePart[];
+  orders: import('../types').Order[];
 }
+
+export const getFactoryBadgeClass = (factoryId: string) => {
+  switch (factoryId) {
+    case 'Lanka Tiles':
+      return 'bg-blue-50 text-blue-700 border border-blue-200';
+    case 'Lanka Wall Tiles':
+      return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+    case 'Rocell Horana':
+      return 'bg-amber-50 text-amber-700 border border-amber-200';
+    case 'Rocell Eheliyagoda':
+      return 'bg-purple-50 text-purple-700 border border-purple-200';
+    default:
+      return 'bg-gray-50 text-gray-700 border border-gray-200';
+  }
+};
 
 export const InventoryTable: React.FC<InventoryTableProps> = ({
   data,
   currentUser,
   onDataChange,
   cartItems,
-  onAddToCart
+  onAddToCart,
+  allParts,
+  orders
 }) => {
   const [sortField, setSortField] = useState<SortField>(SortField.TOTAL_VALUE);
   const [sortDirection, setSortDirection] = useState<SortDirection>(SortDirection.DESC);
@@ -176,20 +195,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
   };
 
   // --- Data & Reserved Stock ---
-  const [orders, setOrders] = useState<import('../types').Order[]>([]);
-
-  // Fetch orders to calculate reserved stock
-  React.useEffect(() => {
-    const loadOrders = async () => {
-      try {
-        const allOrders = await getOrders({ username: 'admin', role: 'admin', approved: true }); // Fetch as admin to see all reservations
-        setOrders(allOrders);
-      } catch (e) {
-        console.error("Failed to load orders for reservation calc", e);
-      }
-    };
-    loadOrders();
-  }, [data]); // Reload when data changes (e.g. after edit)
+  // orders is now passed down as a prop from App.tsx
 
   // Memoize reserved stock calculation
   const reservedStock = useMemo(() => {
@@ -545,11 +551,11 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                       {formatCurrency(isEditing ? editValues.onHand * editValues.unitCost : part.totalValue)}
                     </td>
 
-                    <td className="px-4 py-3 whitespace-nowrap text-gray-400 text-xs">
-                      <div className="flex items-center gap-1">
+                    <td className="px-4 py-3 whitespace-nowrap text-xs">
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider ${getFactoryBadgeClass(part.factoryId)}`}>
                         <MapPin className="w-3 h-3" />
                         {part.factoryId}
-                      </div>
+                      </span>
                     </td>
 
                     {/* Action Column */}
@@ -679,6 +685,8 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
           onAddToCart={onAddToCart}
           currentUser={currentUser}
           onSuccess={onDataChange}
+          allParts={allParts}
+          orders={orders}
         />
       )}
 

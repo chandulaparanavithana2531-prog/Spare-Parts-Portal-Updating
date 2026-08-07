@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { SparePart, User } from '../types';
+import { SparePart, User, Order } from '../types';
 import { X, MapPin, Package, Settings, DollarSign, Calendar, Tag, Factory, Upload, Loader2, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import { saveInventory } from '../services/db';
 import { storage } from '../services/firebase';
@@ -13,6 +13,8 @@ interface ItemDetailsModalProps {
     onAddToCart: (part: SparePart) => void;
     currentUser: User;
     onSuccess?: () => void; // Callback for successful update
+    allParts: SparePart[];
+    orders: Order[];
 }
 
 // --- Image Compression Helper (Reused) ---
@@ -76,7 +78,7 @@ const compressImage = async (file: File): Promise<Blob> => {
     });
 };
 
-export const ItemDetailsModal: React.FC<ItemDetailsModalProps> = ({ part, reservedQuantity = 0, isOpen, onClose, onAddToCart, currentUser, onSuccess }) => {
+export const ItemDetailsModal: React.FC<ItemDetailsModalProps> = ({ part, reservedQuantity = 0, isOpen, onClose, onAddToCart, currentUser, onSuccess, allParts, orders }) => {
     const [uploadStatus, setUploadStatus] = useState<string | null>(null);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const [showLinkInput, setShowLinkInput] = useState(false);
@@ -464,6 +466,77 @@ export const ItemDetailsModal: React.FC<ItemDetailsModalProps> = ({ part, reserv
                                     {formatCurrency(part.valueMoreThan3Years)}
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    {/* Stock Availability Across Plants */}
+                    <div className="space-y-4">
+                        <h3 className="font-bold text-gray-900 flex items-center gap-2 border-b pb-2">
+                            <MapPin className="w-4 h-4 text-gray-500" />
+                            Stock Availability Across Plants
+                        </h3>
+                        <div className="border border-gray-150 rounded-2xl overflow-hidden divide-y divide-gray-150 text-xs">
+                            <div className="grid grid-cols-4 p-3 bg-gray-50 font-bold text-gray-600">
+                                <div>Plant Location</div>
+                                <div className="text-right">On Hand</div>
+                                <div className="text-right">Reserved</div>
+                                <div className="text-right">Available</div>
+                            </div>
+                            {[
+                              { name: 'Lanka Tiles', short: 'LT' },
+                              { name: 'Lanka Wall Tiles', short: 'LWT' },
+                              { name: 'Rocell Horana', short: 'RCLH' },
+                              { name: 'Rocell Eheliyagoda', short: 'RCLE' }
+                            ].map(factory => {
+                                const matchingPart = allParts.find(p => p.materialNumber === part.materialNumber && p.factoryId === factory.name);
+                                
+                                // Calculate reserved stock for this specific factory's part
+                                let reserved = 0;
+                                if (matchingPart) {
+                                    orders.forEach(order => {
+                                        if (order.status === 'pending' || order.status === 'approved') {
+                                            order.items.forEach(item => {
+                                                if (item.sparePartId === matchingPart.id && item.status === 'approved') {
+                                                    reserved += item.quantity;
+                                                }
+                                            });
+                                        }
+                                    });
+                                }
+
+                                const onHand = matchingPart ? matchingPart.onHand : 0;
+                                const available = Math.max(0, onHand - reserved);
+                                const isCurrent = matchingPart?.id === part.id;
+
+                                return (
+                                    <div key={factory.name} className={`grid grid-cols-4 p-3 items-center ${isCurrent ? 'bg-blue-50/50 font-bold text-blue-950' : 'bg-white text-gray-700'}`}>
+                                        <div className="flex items-center gap-1.5">
+                                            <div className={`w-2 h-2 rounded-full ${isCurrent ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
+                                            {factory.name} {isCurrent && '(Selected)'}
+                                        </div>
+                                        <div className="text-right font-medium">{matchingPart ? onHand : '-'}</div>
+                                        <div className={`text-right font-medium ${reserved > 0 ? 'text-orange-600' : 'text-gray-400'}`}>
+                                            {matchingPart && reserved > 0 ? reserved : '-'}
+                                        </div>
+                                        <div className="flex items-center justify-end gap-2">
+                                            <span className={`font-bold ${available > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                {matchingPart ? available : '0'}
+                                            </span>
+                                            {matchingPart && !isCurrent && available > 0 && currentUser.role !== 'admin' && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        onAddToCart(matchingPart);
+                                                    }}
+                                                    className="px-2 py-0.5 bg-blue-600 text-white rounded text-[10px] font-bold hover:bg-blue-700 transition-colors uppercase tracking-wider"
+                                                >
+                                                    Add
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
                 </div>

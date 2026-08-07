@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CartItem, User } from '../types';
+import { CartItem, User, SparePart, Order } from '../types';
 import { createOrder } from '../services/db';
 import { X, Trash2, ShoppingCart, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 
@@ -11,6 +11,8 @@ interface CartDrawerProps {
   onUpdateQty: (id: string, qty: number) => void;
   onRemoveItem: (id: string) => void;
   onClearCart: () => void;
+  allParts: SparePart[];
+  orders: Order[];
 }
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
@@ -20,7 +22,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   currentUser,
   onUpdateQty,
   onRemoveItem,
-  onClearCart
+  onClearCart,
+  allParts,
+  orders
 }) => {
   const [submitting, setSubmitting] = useState(false);
 
@@ -116,6 +120,53 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     <button onClick={() => onRemoveItem(item.id)} className="text-gray-400 hover:text-red-500 transition-colors">
                       <Trash2 className="w-4 h-4" />
                     </button>
+                  </div>
+
+                  {/* Cross-Plant Stock Level Check */}
+                  <div className="mt-3 pt-2 border-t border-dashed border-gray-100">
+                    <span className="text-[9px] font-black uppercase text-gray-400 tracking-wider block mb-1">Cross-Plant Availability:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { name: 'Lanka Tiles', short: 'LT' },
+                        { name: 'Lanka Wall Tiles', short: 'LWT' },
+                        { name: 'Rocell Horana', short: 'RCLH' },
+                        { name: 'Rocell Eheliyagoda', short: 'RCLE' }
+                      ].map(factory => {
+                        const matchingPart = allParts.find(p => p.materialNumber === item.materialNumber && p.factoryId === factory.name);
+                        
+                        let reserved = 0;
+                        if (matchingPart) {
+                          orders.forEach(order => {
+                            if (order.status === 'pending' || order.status === 'approved') {
+                              order.items.forEach(orderItem => {
+                                if (orderItem.sparePartId === matchingPart.id && orderItem.status === 'approved') {
+                                  reserved += orderItem.quantity;
+                                }
+                              });
+                            }
+                          });
+                        }
+                        
+                        const avail = matchingPart ? Math.max(0, matchingPart.onHand - reserved) : 0;
+                        const isCurrent = factory.name === item.factoryId;
+                        
+                        return (
+                          <div 
+                            key={factory.name} 
+                            className={`text-[9px] font-bold px-1.5 py-0.5 rounded border flex items-center gap-1
+                              ${isCurrent 
+                                ? 'bg-blue-50 text-blue-700 border-blue-200' 
+                                : avail > 0 
+                                  ? 'bg-green-50 text-green-700 border-green-200' 
+                                  : 'bg-red-50 text-red-500 border-red-100'}`}
+                            title={`${factory.name}: ${matchingPart ? `Available: ${avail} (OnHand: ${matchingPart.onHand}, Reserved: ${reserved})` : 'No Stock'}`}
+                          >
+                            <span>{factory.short}:</span>
+                            <span className="font-extrabold">{matchingPart ? avail : '0'}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between mt-4">

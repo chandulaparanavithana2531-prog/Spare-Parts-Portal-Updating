@@ -50,7 +50,11 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({ parts, onFilterC
     const fetchReconciliation = async () => {
       try {
         const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-        const res = await fetch(`${baseUrl}/api/reconciliation-status`);
+        const headers: Record<string, string> = {};
+        if (currentUser && currentUser.factoryAffiliation) {
+          headers['x-factory-affiliation'] = currentUser.factoryAffiliation;
+        }
+        const res = await fetch(`${baseUrl}/api/reconciliation-status`, { headers });
         if (res.ok) {
           const data = await res.json();
           setReconData(data);
@@ -60,7 +64,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({ parts, onFilterC
       }
     };
     fetchReconciliation();
-  }, [parts]);
+  }, [parts, currentUser]);
 
   // 3. Filter parts dynamically based on active factory scope
   const scopedParts = useMemo(() => {
@@ -407,12 +411,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({ parts, onFilterC
             <div className="space-y-3">
               <h4 className="text-xs font-bold text-gray-500 uppercase">Breakdown per Plant</h4>
               <div className="border border-gray-150 rounded-2xl overflow-hidden divide-y divide-gray-150 text-xs">
-                <div className="grid grid-cols-3 p-3 bg-gray-50 font-bold text-gray-600">
+          <div className="grid grid-cols-3 p-3 bg-gray-50 font-bold text-gray-600">
                   <div>Business Unit</div>
                   <div className="text-center">Google Sheet</div>
                   <div className="text-right">Portal DB</div>
                 </div>
-                {Object.keys(reconData.sheetTotals.breakdown).map(factory => {
+                {Object.keys(reconData.sheetTotals.breakdown)
+                  .filter(factory => isUserAdmin || factory === currentUser.factoryAffiliation)
+                  .map(factory => {
                   const sBU = reconData.sheetTotals.breakdown[factory];
                   const dBU = reconData.portalTotals.breakdown[factory] || { skus: 0, value: 0 };
                   const isMatch = sBU.skus === dBU.skus && Math.abs(sBU.value - dBU.value) < 1.0;

@@ -138,13 +138,7 @@ export const saveInventory = async (parts: SparePart[], performerUsername: strin
 
 export const getInventory = async (user?: User): Promise<SparePart[]> => {
   try {
-    let querySnapshot;
-    if (user && user.role !== 'admin' && user.factoryAffiliation) {
-      const q = query(collection(db, 'inventory'), where('factoryId', '==', user.factoryAffiliation));
-      querySnapshot = await getDocs(q);
-    } else {
-      querySnapshot = await getDocs(collection(db, 'inventory'));
-    }
+    let querySnapshot = await getDocs(collection(db, 'inventory'));
     
     const parts: SparePart[] = [];
     querySnapshot.forEach((doc) => {
@@ -162,9 +156,6 @@ export const getInventory = async (user?: User): Promise<SparePart[]> => {
     try {
       const local = localStorage.getItem('spareshare_inventory');
       let localParts: SparePart[] = local ? JSON.parse(local) : [];
-      if (user && user.role !== 'admin' && user.factoryAffiliation) {
-        localParts = localParts.filter(p => p.factoryId === user.factoryAffiliation);
-      }
       return localParts;
     } catch (e) {
       console.error("[DB Fallback] Failed to read from localStorage:", e);

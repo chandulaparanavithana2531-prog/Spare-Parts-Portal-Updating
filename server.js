@@ -178,8 +178,6 @@ function normalizeImageUrl(url) {
 
 // REST endpoints for catalog and factories matching frontend expectations
 app.get(['/parts', '/api/parts'], async (req, res) => {
-  const userFactory = req.headers['x-factory-affiliation'];
-  
   // Check if we have a local db.json file containing migrated parts
   try {
     const dbJsonPath = path.join(process.cwd(), 'db.json');
@@ -188,11 +186,7 @@ app.get(['/parts', '/api/parts'], async (req, res) => {
       console.log(`[Server] db.json exists, parsing...`);
       let localData = JSON.parse(fs.readFileSync(dbJsonPath, 'utf8'));
       if (Array.isArray(localData) && localData.length > 0) {
-        console.log(`[Server] Serving parts from local db.json. Factory filter: ${userFactory}`);
-        
-        if (userFactory && userFactory !== 'admin' && userFactory !== 'undefined') {
-          localData = localData.filter(part => part.factoryId === userFactory);
-        }
+        console.log(`[Server] Serving parts from local db.json.`);
         
         const enriched = localData.map(part => {
           let imageUrl = part.imageUrl;
@@ -225,9 +219,7 @@ app.get(['/parts', '/api/parts'], async (req, res) => {
   if (firestoreDb) {
     try {
       let queryRef = firestoreDb.collection('inventory');
-      if (userFactory && userFactory !== 'admin' && userFactory !== 'undefined') {
-        queryRef = queryRef.where('factoryId', '==', userFactory);
-      }
+      const snapshot = await queryRef.get();
       const snapshot = await queryRef.get();
       const parts = [];
       snapshot.forEach(doc => {
@@ -354,6 +346,7 @@ app.get(['/factories', '/api/factories'], (req, res) => {
 
 // Endpoint for data reconciliation status between sheet and portal DB
 app.get(['/reconciliation-status', '/api/reconciliation-status'], async (req, res) => {
+  const userFactory = req.headers['x-factory-affiliation'];
   try {
     const filepath = path.join(process.cwd(), 'user_sheet_temp.xlsx');
     if (!fs.existsSync(filepath)) {
@@ -372,7 +365,11 @@ app.get(['/reconciliation-status', '/api/reconciliation-status'], async (req, re
       { name: 'RCL-E - Inventory', factory: 'Rocell Eheliyagoda' }
     ];
 
-    sheets.forEach(config => {
+    const targetSheets = (userFactory && userFactory !== 'admin' && userFactory !== 'undefined')
+      ? sheets.filter(config => config.factory === userFactory)
+      : sheets;
+
+    targetSheets.forEach(config => {
       let worksheet = workbook.Sheets[config.name];
       if (config.factory === 'Rocell Eheliyagoda') {
         const rcleDataPath = path.join(process.cwd(), 'rcle_data_temp.xlsx');
@@ -420,6 +417,9 @@ app.get(['/reconciliation-status', '/api/reconciliation-status'], async (req, re
     const dbBreakdown = {};
     
     dbParts.forEach(p => {
+      if (userFactory && userFactory !== 'admin' && userFactory !== 'undefined' && p.factoryId !== userFactory) {
+        return;
+      }
       if (!dbBreakdown[p.factoryId]) {
         dbBreakdown[p.factoryId] = { skus: 0, value: 0 };
       }

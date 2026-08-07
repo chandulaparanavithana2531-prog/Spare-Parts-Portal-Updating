@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { Order, OrderStatus, User } from '../types';
+import { Order, OrderStatus, User, SparePart } from '../types';
 import { getOrders, processOrderItem, clearOrders } from '../services/db';
 import { CheckCircle, XCircle, ChevronDown, ChevronUp, User as UserIcon, ArrowRight, ArrowLeft, Trash2, RotateCcw } from 'lucide-react';
 
 interface OrderManagementProps {
   currentUser: User;
+  allParts: SparePart[];
 }
 
-export const OrderManagement: React.FC<OrderManagementProps> = ({ currentUser }) => {
+export const OrderManagement: React.FC<OrderManagementProps> = ({ currentUser, allParts }) => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
@@ -246,9 +247,55 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ currentUser })
                       <tbody className="divide-y divide-gray-100">
                         {displayItems.map((item, idx) => (
                           <tr key={`${order.id}-item-${idx}`} className="hover:bg-white transition-colors">
-                            <td className="px-4 py-3 font-medium text-gray-900">
+                             <td className="px-4 py-3 font-medium text-gray-900">
                               {item.sparePartDescription}
                               <div className="text-xs text-gray-400 font-normal">{item.sparePartId}</div>
+                              {/* Inline Cross-Plant Stocks */}
+                              {allParts && allParts.length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-1.5 items-center">
+                                  <span className="text-[9px] font-black uppercase text-gray-400 tracking-wider">Stocks:</span>
+                                  {(() => {
+                                    const matNum = item.sparePartId.replace(`${item.fromFactory}-`, '');
+                                    return [
+                                      { name: 'Lanka Tiles', short: 'LT' },
+                                      { name: 'Lanka Wall Tiles', short: 'LWT' },
+                                      { name: 'Rocell Horana', short: 'RCLH' },
+                                      { name: 'Rocell Eheliyagoda', short: 'RCLE' }
+                                    ].map(factory => {
+                                      const matchingPart = allParts.find(p => p.materialNumber === matNum && p.factoryId === factory.name);
+                                      let reserved = 0;
+                                      if (matchingPart) {
+                                        orders.forEach(order => {
+                                          if (order.status === 'pending' || order.status === 'approved') {
+                                            order.items.forEach(orderItem => {
+                                              if (orderItem.sparePartId === matchingPart.id && orderItem.status === 'approved') {
+                                                reserved += orderItem.quantity;
+                                              }
+                                            });
+                                          }
+                                        });
+                                      }
+                                      const avail = matchingPart ? Math.max(0, matchingPart.onHand - reserved) : 0;
+                                      const isCurrent = factory.name === item.fromFactory;
+                                      
+                                      return (
+                                        <span 
+                                          key={factory.name} 
+                                          className={`text-[9px] px-1.5 py-0.5 rounded border font-bold
+                                            ${isCurrent 
+                                              ? 'bg-blue-50 text-blue-700 border-blue-200' 
+                                              : avail > 0 
+                                                ? 'bg-green-50 text-green-700 border-green-200' 
+                                                : 'bg-red-50 text-red-500 border-red-100'}`}
+                                          title={`${factory.name}: ${matchingPart ? `Available: ${avail} (OnHand: ${matchingPart.onHand}, Reserved: ${reserved})` : 'No Stock'}`}
+                                        >
+                                          {factory.short}: {matchingPart ? avail : 0}
+                                        </span>
+                                      );
+                                    });
+                                  })()}
+                                </div>
+                              )}
                             </td>
                             <td className="px-4 py-3 text-gray-600">{item.fromFactory}</td>
                             <td className="px-4 py-3 text-center font-semibold text-gray-900">{item.quantity}</td>

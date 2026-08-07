@@ -67,8 +67,17 @@ const FACTORIES = [
   },
 ];
 
-const DashboardConsumptionView: React.FC<{ parts: SparePart[]; historicalConsumption: HistoricalConsumptionRecord[] }> = ({ parts, historicalConsumption }) => {
-  const [selectedFactory, setSelectedFactory] = useState<string>('All');
+const DashboardConsumptionView: React.FC<{ parts: SparePart[]; historicalConsumption: HistoricalConsumptionRecord[]; currentUser: User }> = ({ parts, historicalConsumption, currentUser }) => {
+  const isUserAdmin = currentUser.role === 'admin';
+  const initialFactory = isUserAdmin ? 'All' : (currentUser.factoryAffiliation || 'Lanka Tiles');
+  const [selectedFactory, setSelectedFactory] = useState<string>(initialFactory);
+
+  // If currentUser factory affiliation changes, force state update
+  React.useEffect(() => {
+    if (!isUserAdmin && currentUser.factoryAffiliation) {
+      setSelectedFactory(currentUser.factoryAffiliation);
+    }
+  }, [currentUser, isUserAdmin]);
 
   // Filter only parts that have been consumed and match selection
   const consumedParts = parts.filter(p => (p.consumptionQty || 0) > 0 && (selectedFactory === 'All' || p.factoryId === selectedFactory));
@@ -232,26 +241,33 @@ const DashboardConsumptionView: React.FC<{ parts: SparePart[]; historicalConsump
   return (
     <div className="space-y-6">
       {/* Factory Selection Segmented Pills */}
-      <div className="flex flex-wrap items-center gap-2 bg-white/60 backdrop-blur-md p-2 rounded-2xl border border-gray-200/50 shadow-sm shrink-0">
-        <span className="text-[10px] font-black uppercase text-gray-400 tracking-wider mr-2 ml-2">Plant Selector:</span>
-        {(['All', 'Lanka Tiles', 'Lanka Wall Tiles', 'Rocell Horana', 'Rocell Eheliyagoda'] as const).map((factory) => {
-          const isActive = selectedFactory === factory;
-          return (
-            <button
-              key={factory}
-              onClick={() => setSelectedFactory(factory)}
-              className={`
-                px-4 py-2 text-xs font-black uppercase tracking-widest rounded-xl transition-all duration-200 cursor-pointer
-                ${isActive 
-                  ? 'bg-blue-600 text-white shadow shadow-blue-100 scale-[1.02]' 
-                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100/50'}
-              `}
-            >
-              {factory === 'All' ? 'All Plants' : factory}
-            </button>
-          );
-        })}
-      </div>
+      {isUserAdmin ? (
+        <div className="flex flex-wrap items-center gap-2 bg-white/60 backdrop-blur-md p-2 rounded-2xl border border-gray-200/50 shadow-sm shrink-0">
+          <span className="text-[10px] font-black uppercase text-gray-400 tracking-wider mr-2 ml-2">Plant Selector:</span>
+          {(['All', 'Lanka Tiles', 'Lanka Wall Tiles', 'Rocell Horana', 'Rocell Eheliyagoda'] as const).map((factory) => {
+            const isActive = selectedFactory === factory;
+            return (
+              <button
+                key={factory}
+                onClick={() => setSelectedFactory(factory)}
+                className={`
+                  px-4 py-2 text-xs font-black uppercase tracking-widest rounded-xl transition-all duration-200 cursor-pointer
+                  ${isActive 
+                    ? 'bg-blue-600 text-white shadow shadow-blue-100 scale-[1.02]' 
+                    : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100/50'}
+                `}
+              >
+                {factory === 'All' ? 'All Plants' : factory}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100 w-fit">
+          <Building2 className="w-4 h-4 text-blue-600" />
+          <span>Plant Scoped: {selectedFactory}</span>
+        </div>
+      )}
 
       {/* Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -511,6 +527,14 @@ function App() {
   const [parts, setParts] = useState<SparePart[]>(() => {
     try {
       const local = localStorage.getItem('spareshare_inventory');
+      return local ? JSON.parse(local) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [orders, setOrders] = useState<import('./types').Order[]>(() => {
+    try {
+      const local = localStorage.getItem('spareshare_orders');
       return local ? JSON.parse(local) : [];
     } catch (e) {
       return [];
@@ -898,13 +922,15 @@ function App() {
         { parts: backendData, source: partsSource },
         { factories: backendFactories },
         { records: histRecords },
-        historyLogs
+        historyLogs,
+        ordersList
       ] = await Promise.all([
-        getInventory(currentUser),
-        fetchBackendParts(currentUser?.role === 'admin' ? undefined : currentUser?.factoryAffiliation),
+        getInventory(undefined),
+        fetchBackendParts(undefined),
         fetchBackendFactories(),
         fetchHistoricalConsumption(currentUser?.role === 'admin' ? undefined : currentUser?.factoryAffiliation),
-        getUploadHistory()
+        getUploadHistory(),
+        getOrders({ username: 'admin', role: 'admin', approved: true } as any)
       ]);
 
       // 3. Prioritize local backend server database (db.json) over Firestore when available
@@ -984,6 +1010,12 @@ function App() {
       try {
         localStorage.setItem('spareshare_uploadHistory', JSON.stringify(historyLogs));
       } catch (e) {}
+
+      // 7. Set orders
+      setOrders(ordersList);
+      try {
+        localStorage.setItem('spareshare_orders', JSON.stringify(ordersList));
+      } catch (e) {}
     } catch (error) {
       console.error("Error refreshing unified data sources:", error);
     } finally {
@@ -995,9 +1027,13 @@ function App() {
     if (!currentUser) return;
     try {
       const [allOrders, pendingUsersList] = await Promise.all([
-        getOrders(currentUser),
+        getOrders({ username: 'admin', role: 'admin', approved: true } as any),
         currentUser.role === 'admin' ? getPendingUsers() : Promise.resolve([])
       ]);
+      setOrders(allOrders);
+      try {
+        localStorage.setItem('spareshare_orders', JSON.stringify(allOrders));
+      } catch (e) {}
       const pendingOrders = allOrders.filter(o =>
         o.status === 'pending' &&
         (currentUser.role === 'admin' || (o.items.length > 0 && o.items[0].fromFactory === currentUser.factoryAffiliation))
@@ -2185,7 +2221,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
                           currentUser={currentUser}
                         />
                       ) : (
-                        <DashboardConsumptionView parts={parts} historicalConsumption={historicalConsumption} />
+                        <DashboardConsumptionView parts={parts} historicalConsumption={historicalConsumption} currentUser={currentUser} />
                       )}
 
                       {/* How-To Catalogue Guide */}
@@ -2200,10 +2236,12 @@ Ensure the Excel format is correct and you have a stable internet connection.
                         onDataChange={refreshData}
                         cartItems={cartItems}
                         onAddToCart={handleAddToCart}
+                        allParts={parts}
+                        orders={orders}
                       />
                     </div>
                   )}
-                  {activeTab === 'orders' && <OrderManagement currentUser={currentUser} />}
+                  {activeTab === 'orders' && <OrderManagement currentUser={currentUser} allParts={parts} />}
                   {activeTab === 'users' && <UserManagement currentUser={currentUser} />}
                   {activeTab === 'audit' && <AuditLogs />}
                 </>
@@ -2230,6 +2268,8 @@ Ensure the Excel format is correct and you have a stable internet connection.
         onUpdateQty={handleUpdateCartQty}
         onRemoveItem={handleRemoveFromCart}
         onClearCart={handleClearCart}
+        allParts={parts}
+        orders={orders}
       />
 
       <AddItemModal
