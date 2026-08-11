@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Upload, Search, LayoutDashboard, SlidersHorizontal, Sparkles, CheckCircle, RefreshCw, Database, FileSpreadsheet, LogOut, ShoppingBag, ShoppingCart, Plus, Trash2, ShieldAlert, Sun, Moon, LogIn, Globe, ArrowRight, Menu, X } from 'lucide-react';
+import { Upload, Search, LayoutDashboard, SlidersHorizontal, Sparkles, CheckCircle, RefreshCw, Database, FileSpreadsheet, LogOut, ShoppingBag, ShoppingCart, Plus, Trash2, ShieldAlert, Sun, Moon, LogIn, Globe, ArrowRight, Menu, X, Building2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 import { parseExcelFile, parseSystemReport } from './services/excelService';
 import { SparePart, User, CartItem, HistoricalConsumptionRecord, UploadHistoryRecord } from './types';
-import { saveInventory, getInventory, clearDatabase, deleteFactoryData, getOrders, getPendingUsers, saveSystemReport, saveHistoricalConsumption, getHistoricalConsumption, getUploadHistory, revertUpload } from './services/db';
+import { saveInventory, getInventory, deleteFactoryData, getOrders, getPendingUsers, saveSystemReport, saveHistoricalConsumption, getHistoricalConsumption, getUploadHistory, revertUpload } from './services/db';
 import { fetchBackendParts, fetchBackendFactories, mergeAndDeduplicate, fetchHistoricalConsumption, uploadHistoricalConsumptionFile } from './services/apiService';
 import { DashboardStats } from './components/DashboardStats';
 import { InventoryTable } from './components/InventoryTable';
@@ -2057,29 +2057,6 @@ Ensure the Excel format is correct and you have a stable internet connection.
                     >
                       <Database className="w-4 h-4" />
                       Manage Data
-                    </button>
-
-                    <button
-                      onClick={async () => {
-                        const confirmReset = confirm("WARNING: This will delete ALL inventory and order history. Are you sure?");
-                        if (confirmReset) {
-                          setLoadingDB(true);
-                          try {
-                            await clearDatabase(currentUser.username);
-                            await refreshData();
-                            alert("System reset successful. Inventory and orders have been cleared.");
-                          } catch (e) {
-                            console.error(e);
-                            alert("Failed to clear data. Please check your internet connection.");
-                          } finally {
-                            setLoadingDB(false);
-                          }
-                        }
-                      }}
-                      className="p-3 text-red-500 bg-red-50/50 border border-red-100 rounded-2xl hover:bg-red-50 hover:text-red-600 transition-all hover:shadow-lg hover:shadow-red-200"
-                      title="Clear All Data (Core Reset)"
-                    >
-                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 )}

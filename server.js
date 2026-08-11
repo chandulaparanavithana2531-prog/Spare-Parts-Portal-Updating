@@ -220,7 +220,6 @@ app.get(['/parts', '/api/parts'], async (req, res) => {
     try {
       let queryRef = firestoreDb.collection('inventory');
       const snapshot = await queryRef.get();
-      const snapshot = await queryRef.get();
       const parts = [];
       snapshot.forEach(doc => {
         const data = doc.data();
