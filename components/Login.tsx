@@ -55,7 +55,6 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         setPassword(''); // Clear password for safety
       } else {
         // Login
-        // Simulate network delay slightly for effect
         await new Promise(r => setTimeout(r, 500));
         const user = await loginUser(username, password);
 
@@ -236,7 +235,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
   );
 };
 
-// Helper Icon for Success message (missing in imports above, adding internally or update imports)
+// Helper Icon for Success message
 const CheckCircle: React.FC<any> = (props) => (
   <svg
     {...props}
