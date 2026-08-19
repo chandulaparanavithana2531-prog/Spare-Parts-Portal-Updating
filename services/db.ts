@@ -1253,3 +1253,15 @@ export const permanentDeleteSparePart = async (partId: string, performerUsername
     }
   );
 };
+
+export const syncGoogleSheets = async (performerUsername: string): Promise<void> => {
+  const res = await fetch(`${API_URL}/api/sync-sheets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: performerUsername })
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || `Failed to trigger sync: ${res.statusText}`);
+  }
+};

@@ -1022,6 +1022,44 @@ app.post(['/orders/created', '/api/orders/created'], async (req, res) => {
   }
 });
 
+// REST API for triggering Google Sheets sync
+app.post(['/api/sync-sheets'], async (req, res) => {
+  const username = req.body.username || 'admin';
+  console.log(`[Sync] Google Sheets sync triggered by user: ${username}`);
+  
+  const { exec } = require('child_process');
+  exec('node scripts/sync_db.js', async (error, stdout, stderr) => {
+    if (error) {
+      console.error(`[Sync Error] Failed to run sync_db.js: ${error.message}`);
+      return;
+    }
+    console.log(`[Sync Success] Database synced from Google Sheets.`);
+    
+    // Log audit log event
+    try {
+      if (firestoreDb) {
+        const logRef = firestoreDb.collection('audit_logs').doc();
+        await logRef.set({
+          user_id: username,
+          user_name: username,
+          plant_id: 'System',
+          plant_name: 'System',
+          action: 'UPDATED',
+          entity_type: 'google_sheets',
+          entity_id: 'Master Sheet',
+          changes: JSON.stringify({ sync: { old: 'stale', new: 'synced' } }),
+          created_at: Date.now(),
+          details: 'Synced database with master Google Sheets'
+        });
+      }
+    } catch (auditError) {
+      console.error("[Sync Audit] Failed to log sync action:", auditError);
+    }
+  });
+
+  return res.json({ success: true, message: "Sync process started in the background." });
+});
+
 app.listen(PORT, () => {
   console.log(`[Server] Spare Parts Backend running on port ${PORT}`);
   

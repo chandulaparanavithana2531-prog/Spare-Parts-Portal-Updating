@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 import { parseExcelFile, parseSystemReport } from './services/excelService';
 import { SparePart, User, CartItem, HistoricalConsumptionRecord, UploadHistoryRecord } from './types';
-import { saveInventory, getInventory, deleteFactoryData, getOrders, getPendingUsers, saveSystemReport, saveHistoricalConsumption, getHistoricalConsumption, getUploadHistory, revertUpload } from './services/db';
+import { saveInventory, getInventory, deleteFactoryData, getOrders, getPendingUsers, saveSystemReport, saveHistoricalConsumption, getHistoricalConsumption, getUploadHistory, revertUpload, syncGoogleSheets } from './services/db';
 import { fetchBackendParts, fetchBackendFactories, mergeAndDeduplicate, fetchHistoricalConsumption, uploadHistoricalConsumptionFile } from './services/apiService';
 import { DashboardStats } from './components/DashboardStats';
 import { InventoryTable } from './components/InventoryTable';
@@ -556,6 +556,7 @@ function App() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [loadingDB, setLoadingDB] = useState(false);
+  const [isSyncingSheets, setIsSyncingSheets] = useState(false);
   
   // Upload Preview State
   const [uploadPreview, setUploadPreview] = useState<ExcelParseResult | null>(null);
@@ -1703,6 +1704,44 @@ Ensure the Excel format is correct and you have a stable internet connection.
                   Return to Dashboard
                 </button>
               )}
+            </div>
+
+            {/* Google Sheets Sync Banner */}
+            <div className="bg-gradient-to-r from-emerald-50/50 to-teal-50/50 border border-emerald-100/80 rounded-[2rem] p-6 flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="flex gap-4">
+                <div className="w-12 h-12 rounded-full bg-emerald-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-emerald-200">
+                  <Database className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900 text-[15px]">Google Sheets Direct Sync</h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Synchronize parts inventories directly from the master Google Spreadsheet (Lanka Tiles, Lanka Wall Tiles, Rocell Horana, and Rocell Eheliyagoda).
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  if (confirm("Are you sure you want to trigger a Google Sheets synchronization? This will run the backend sync process.")) {
+                    setIsSyncingSheets(true);
+                    try {
+                      await syncGoogleSheets(currentUser.username);
+                      alert("Synchronization started successfully in the background. It will reload the database automatically when finished.");
+                      setTimeout(async () => {
+                        await refreshData();
+                      }, 5000);
+                    } catch (e: any) {
+                      alert(`Sync trigger failed: ${e.message}`);
+                    } finally {
+                      setIsSyncingSheets(false);
+                    }
+                  }
+                }}
+                disabled={isSyncingSheets}
+                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-emerald-100 hover:shadow-xl hover:shadow-emerald-200 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300 flex items-center gap-2 cursor-pointer shrink-0"
+              >
+                <RefreshCw className={`w-4 h-4 ${isSyncingSheets ? 'animate-spin' : ''}`} />
+                {isSyncingSheets ? 'Syncing...' : 'Sync Master Spreadsheet'}
+              </button>
             </div>
 
             {/* Inner Sub-Tabs Segmented Control */}
