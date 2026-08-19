@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { SparePart, SortField, SortDirection, User, CartItem } from '../types';
 import { ArrowUpDown, ArrowUp, ArrowDown, MapPin, ShoppingCart, Loader2, Edit2, Save, X, Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Filter, ShoppingBag, Eye, Trash2, Upload, Download, CheckCircle, Image as ImageIcon } from 'lucide-react';
-import { updateSparePart, getOrders } from '../services/db';
+import { updateSparePart, getOrders, softDeleteSparePart } from '../services/db';
 import { ItemDetailsModal } from './ItemDetailsModal';
 import { EditItemModal } from './EditItemModal'; // Import Edit Modal
 
@@ -571,13 +571,33 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
 
                         {/* Admin: Full Edit | User: Upload Image Only */}
                         {currentUser.role === 'admin' ? (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); onEditItem(part); }}
-                            className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                            title="Edit Details & Image"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
+                          <div className="flex gap-1 justify-center">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onEditItem(part); }}
+                              className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                              title="Edit Details & Image"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (confirm(`Are you sure you want to delete ${part.description || 'this item'}?`)) {
+                                  try {
+                                    await softDeleteSparePart(part.id, currentUser.username);
+                                    alert("Item soft-deleted successfully.");
+                                    onDataChange();
+                                  } catch (err: any) {
+                                    alert(`Failed to delete item: ${err.message}`);
+                                  }
+                                }
+                              }}
+                              className="p-1 text-red-500 hover:bg-red-50 rounded transition-colors"
+                              title="Delete Item"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         ) : (
                           <div className="flex gap-1 justify-center">
                             <button

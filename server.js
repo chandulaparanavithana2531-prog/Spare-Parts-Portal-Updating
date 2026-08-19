@@ -188,7 +188,7 @@ app.get(['/parts', '/api/parts'], async (req, res) => {
       if (Array.isArray(localData) && localData.length > 0) {
         console.log(`[Server] Serving parts from local db.json.`);
         
-        const enriched = localData.map(part => {
+        const enriched = localData.filter(part => part.is_deleted !== true).map(part => {
           let imageUrl = part.imageUrl;
           let image_url = part.image_url;
           const matNum = part.materialNumber;
@@ -223,6 +223,7 @@ app.get(['/parts', '/api/parts'], async (req, res) => {
       const parts = [];
       snapshot.forEach(doc => {
         const data = doc.data();
+        if (data.is_deleted === true) return;
         
         let imageUrl = data.imageUrl;
         let image_url = data.image_url;
@@ -422,6 +423,7 @@ app.get(['/reconciliation-status', '/api/reconciliation-status'], async (req, re
     const dbBreakdown = {};
     
     dbParts.forEach(p => {
+      if (p.is_deleted === true) return;
       if (userFactory && userFactory !== 'admin' && userFactory !== 'undefined' && p.factoryId !== userFactory) {
         return;
       }
@@ -812,6 +814,188 @@ app.post(['/send-email', '/api/send-email'], async (req, res) => {
   } catch (emailErr) {
     console.error("FAILED TO SEND ORDER EMAIL:", emailErr);
     res.status(500).send(`Failed to send email: ${emailErr.message}`);
+  }
+});
+
+// REST API for inventory soft delete
+app.delete(['/api/inventory/:id'], async (req, res) => {
+  const partId = req.params.id;
+  const username = req.body.username || req.query.username || 'admin';
+  try {
+    if (firestoreDb) {
+      const partRef = firestoreDb.collection('inventory').doc(partId);
+      const docSnap = await partRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({ success: false, message: 'Item not found' });
+      }
+      const partData = docSnap.data();
+
+      // Soft delete
+      await partRef.update({
+        is_deleted: true,
+        deleted_at: Date.now()
+      });
+
+      // Log action
+      const logRef = firestoreDb.collection('audit_logs').doc();
+      const log = {
+        user_id: username,
+        user_name: username,
+        plant_id: partData.factoryId || 'System',
+        plant_name: partData.factoryId || 'System',
+        action: 'DELETED',
+        entity_type: 'inventory',
+        entity_id: partId,
+        changes: JSON.stringify({ is_deleted: { old: partData.is_deleted || false, new: true } }),
+        created_at: Date.now(),
+        details: `Soft-deleted item: ${partData.description}`
+      };
+      await logRef.set(log);
+
+      // Update local db.json if present
+      const dbJsonPath = path.join(process.cwd(), 'db.json');
+      if (fs.existsSync(dbJsonPath)) {
+        try {
+          let localData = JSON.parse(fs.readFileSync(dbJsonPath, 'utf8'));
+          if (Array.isArray(localData)) {
+            const idx = localData.findIndex(p => p.id === partId);
+            if (idx !== -1) {
+              localData[idx].is_deleted = true;
+              localData[idx].deleted_at = Date.now();
+              fs.writeFileSync(dbJsonPath, JSON.stringify(localData, null, 2), 'utf8');
+            }
+          }
+        } catch (err) {
+          console.warn("[Server] Failed to update local db.json on soft delete:", err.message);
+        }
+      }
+
+      return res.json({ success: true, message: 'Item soft-deleted successfully' });
+    } else {
+      return res.json({ success: true, message: 'Item soft-deleted in memory' });
+    }
+  } catch (error) {
+    console.error("Soft delete API Error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// REST API for inventory restore (undo)
+app.post(['/api/audit/restore/:id', '/api/inventory/:id/restore'], async (req, res) => {
+  const partId = req.params.id;
+  const username = req.body.username || req.query.username || 'admin';
+  try {
+    if (firestoreDb) {
+      const partRef = firestoreDb.collection('inventory').doc(partId);
+      const docSnap = await partRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({ success: false, message: 'Item not found' });
+      }
+      const partData = docSnap.data();
+
+      // Restore item
+      await partRef.update({
+        is_deleted: false,
+        deleted_at: null
+      });
+
+      // Log action
+      const logRef = firestoreDb.collection('audit_logs').doc();
+      const log = {
+        user_id: username,
+        user_name: username,
+        plant_id: partData.factoryId || 'System',
+        plant_name: partData.factoryId || 'System',
+        action: 'RESTORED',
+        entity_type: 'inventory',
+        entity_id: partId,
+        changes: JSON.stringify({ is_deleted: { old: true, new: false } }),
+        created_at: Date.now(),
+        details: `Restored item: ${partData.description}`
+      };
+      await logRef.set(log);
+
+      // Update in db.json if present
+      const dbJsonPath = path.join(process.cwd(), 'db.json');
+      if (fs.existsSync(dbJsonPath)) {
+        try {
+          let localData = JSON.parse(fs.readFileSync(dbJsonPath, 'utf8'));
+          if (Array.isArray(localData)) {
+            const idx = localData.findIndex(p => p.id === partId);
+            if (idx !== -1) {
+              localData[idx].is_deleted = false;
+              localData[idx].deleted_at = null;
+              fs.writeFileSync(dbJsonPath, JSON.stringify(localData, null, 2), 'utf8');
+            }
+          }
+        } catch (err) {
+          console.warn("[Server] Failed to update local db.json on restore:", err.message);
+        }
+      }
+
+      return res.json({ success: true, message: 'Item restored successfully' });
+    } else {
+      return res.json({ success: true, message: 'Item restored in memory' });
+    }
+  } catch (error) {
+    console.error("Restore API Error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// REST API for inventory permanent delete
+app.delete(['/api/inventory/:id/permanent'], async (req, res) => {
+  const partId = req.params.id;
+  const username = req.body.username || req.query.username || 'admin';
+  try {
+    if (firestoreDb) {
+      const partRef = firestoreDb.collection('inventory').doc(partId);
+      const docSnap = await partRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({ success: false, message: 'Item not found' });
+      }
+      const partData = docSnap.data();
+
+      // Permanent hard delete
+      await partRef.delete();
+
+      // Log action
+      const logRef = firestoreDb.collection('audit_logs').doc();
+      const log = {
+        user_id: username,
+        user_name: username,
+        plant_id: partData.factoryId || 'System',
+        plant_name: partData.factoryId || 'System',
+        action: 'DELETED',
+        entity_type: 'inventory',
+        entity_id: partId,
+        changes: JSON.stringify({ permanent_delete: true }),
+        created_at: Date.now(),
+        details: `Permanently deleted item: ${partData.description}`
+      };
+      await logRef.set(log);
+
+      // Remove from db.json if present
+      const dbJsonPath = path.join(process.cwd(), 'db.json');
+      if (fs.existsSync(dbJsonPath)) {
+        try {
+          let localData = JSON.parse(fs.readFileSync(dbJsonPath, 'utf8'));
+          if (Array.isArray(localData)) {
+            const filtered = localData.filter(p => p.id !== partId);
+            fs.writeFileSync(dbJsonPath, JSON.stringify(filtered, null, 2), 'utf8');
+          }
+        } catch (err) {
+          console.warn("[Server] Failed to update local db.json on permanent delete:", err.message);
+        }
+      }
+
+      return res.json({ success: true, message: 'Item permanently deleted' });
+    } else {
+      return res.json({ success: true, message: 'Item permanently deleted in memory' });
+    }
+  } catch (error) {
+    console.error("Permanent delete API Error:", error);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

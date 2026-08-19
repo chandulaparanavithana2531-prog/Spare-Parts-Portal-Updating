@@ -117,18 +117,61 @@ export const saveInventory = async (parts: SparePart[], performerUsername: strin
       }
     }
 
-    // Log the upload action
-    if (parts.length > 0) {
+    // Log the upload/create/edit action
+    if (parts.length === 1) {
+      try {
+        const part = parts[0];
+        const prev = previousState[part.id];
+        const isNew = !prev || prev.isNew;
+
+        const changes: Record<string, { old: any; new: any }> = {};
+        if (!isNew) {
+          Object.keys(part).forEach(key => {
+            const oldVal = prev[key];
+            const newVal = part[key as keyof SparePart];
+            if (oldVal !== newVal) {
+              changes[key] = { old: oldVal !== undefined ? oldVal : null, new: newVal !== undefined ? newVal : null };
+            }
+          });
+        } else {
+          Object.keys(part).forEach(key => {
+            changes[key] = { old: null, new: part[key as keyof SparePart] };
+          });
+        }
+
+        await logAction(
+          performerUsername,
+          isNew ? 'CREATED' : 'UPDATED',
+          'inventory',
+          part.id,
+          isNew ? `Created item: ${part.description}` : `Updated item: ${part.description}`,
+          {
+            userName: performerUsername,
+            plantId: part.factoryId,
+            plantName: part.factoryId,
+            changes
+          }
+        );
+      } catch (auditError) {
+        console.warn("[DB] Single item audit logging failed:", auditError);
+      }
+    } else if (parts.length > 1) {
       try {
         await logAction(
           performerUsername,
           'UPLOAD',
           'inventory',
           parts[0].factoryId, // Using factory ID as entity ID for bulk upload
-          `Uploaded ${parts.length} items for ${parts[0].factoryId}`
+          `Uploaded ${parts.length} items for ${parts[0].factoryId}`,
+          {
+            userName: performerUsername,
+            plantId: parts[0].factoryId,
+            plantName: parts[0].factoryId,
+            changes: { count: parts.length }
+          }
         );
       } catch (auditError) {
-        console.warn("[DB] Audit logging failed after successful inventory update:", auditError);
+        console.warn("[DB] Bulk audit logging failed:", auditError);
       }
     }
   } catch (firestoreError: any) {
@@ -142,7 +185,10 @@ export const getInventory = async (user?: User): Promise<SparePart[]> => {
     
     const parts: SparePart[] = [];
     querySnapshot.forEach((doc) => {
-      parts.push(doc.data() as SparePart);
+      const part = doc.data() as SparePart;
+      if (part.is_deleted !== true) {
+        parts.push(part);
+      }
     });
     // Sync to local storage for fallback use
     try {
@@ -182,13 +228,38 @@ export const updateSparePart = async (part: SparePart, performerUsername: string
 
   try {
     const ref = doc(db, 'inventory', part.id);
+    const snap = await getDoc(ref);
+    const previousState = snap.exists() ? snap.data() as SparePart : null;
+
     await setDoc(ref, part);
+
+    const changes: Record<string, { old: any; new: any }> = {};
+    if (previousState) {
+      Object.keys(part).forEach(key => {
+        const oldVal = previousState[key as keyof SparePart];
+        const newVal = part[key as keyof SparePart];
+        if (oldVal !== newVal) {
+          changes[key] = { old: oldVal !== undefined ? oldVal : null, new: newVal !== undefined ? newVal : null };
+        }
+      });
+    } else {
+      Object.keys(part).forEach(key => {
+        changes[key] = { old: null, new: part[key as keyof SparePart] };
+      });
+    }
+
     await logAction(
       performerUsername,
-      'UPDATE',
+      previousState ? 'UPDATED' : 'CREATED',
       'inventory',
       part.id,
-      `Updated item: ${part.description}`
+      previousState ? `Updated item: ${part.description}` : `Created item: ${part.description}`,
+      {
+        userName: performerUsername,
+        plantId: part.factoryId,
+        plantName: part.factoryId,
+        changes
+      }
     );
   } catch (error: any) {
     console.warn("[DB Fallback] updateSparePart failed to write to Firestore Cloud (Quota Exceeded). Utilizing local storage copy. Error:", error.message);
@@ -1006,5 +1077,179 @@ export const revertUpload = async (historyId: string, performerUsername: string)
     'inventory',
     record.factoryId,
     `Reverted upload ${historyId} (${record.fileName}) for factory ${record.factoryId}`
+  );
+};
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+
+export const softDeleteSparePart = async (partId: string, performerUsername: string): Promise<void> => {
+  // Try server REST API call first
+  try {
+    const res = await fetch(`${API_URL}/api/inventory/${partId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: performerUsername })
+    });
+    if (res.ok) {
+      console.log(`[DB API] Soft deleted ${partId} via Express API.`);
+      return;
+    }
+  } catch (err: any) {
+    console.warn(`[DB API] Soft delete API failed: ${err.message}. Falling back to Firestore directly.`);
+  }
+
+  // Fallback to direct Firestore write
+  const ref = doc(db, 'inventory', partId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error("Item not found");
+  }
+  const part = snap.data() as SparePart;
+
+  const updatedPart = {
+    ...part,
+    is_deleted: true,
+    deleted_at: Date.now()
+  };
+
+  await setDoc(ref, updatedPart);
+
+  // Sync to local storage
+  try {
+    const existingStr = localStorage.getItem('spareshare_inventory');
+    const existingList: SparePart[] = existingStr ? JSON.parse(existingStr) : [];
+    const idx = existingList.findIndex(p => p.id === partId);
+    if (idx !== -1) {
+      existingList[idx] = updatedPart;
+    }
+    localStorage.setItem('spareshare_inventory', JSON.stringify(existingList));
+  } catch (err) {
+    console.warn("[DB Fallback] Failed to update copy in localStorage:", err);
+  }
+
+  // Log action
+  await logAction(
+    performerUsername,
+    'DELETED',
+    'inventory',
+    partId,
+    `Soft-deleted item: ${part.description}`,
+    {
+      userName: performerUsername,
+      plantId: part.factoryId,
+      plantName: part.factoryId,
+      changes: {
+        is_deleted: { old: part.is_deleted || false, new: true }
+      }
+    }
+  );
+};
+
+export const restoreSparePart = async (partId: string, performerUsername: string): Promise<void> => {
+  // Try server REST API call first
+  try {
+    const res = await fetch(`${API_URL}/api/audit/restore/${partId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: performerUsername })
+    });
+    if (res.ok) {
+      console.log(`[DB API] Restored ${partId} via Express API.`);
+      return;
+    }
+  } catch (err: any) {
+    console.warn(`[DB API] Restore API failed: ${err.message}. Falling back to Firestore directly.`);
+  }
+
+  // Fallback to direct Firestore write
+  const ref = doc(db, 'inventory', partId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error("Item not found");
+  }
+  const part = snap.data() as SparePart;
+
+  const updatedPart = {
+    ...part,
+    is_deleted: false,
+    deleted_at: null
+  };
+
+  await setDoc(ref, updatedPart);
+
+  // Sync to local storage
+  try {
+    const existingStr = localStorage.getItem('spareshare_inventory');
+    const existingList: SparePart[] = existingStr ? JSON.parse(existingStr) : [];
+    const idx = existingList.findIndex(p => p.id === partId);
+    if (idx !== -1) {
+      existingList[idx] = updatedPart;
+    }
+    localStorage.setItem('spareshare_inventory', JSON.stringify(existingList));
+  } catch (err) {
+    console.warn("[DB Fallback] Failed to update copy in localStorage:", err);
+  }
+
+  // Log action
+  await logAction(
+    performerUsername,
+    'RESTORED',
+    'inventory',
+    partId,
+    `Restored item: ${part.description}`,
+    {
+      userName: performerUsername,
+      plantId: part.factoryId,
+      plantName: part.factoryId,
+      changes: {
+        is_deleted: { old: true, new: false }
+      }
+    }
+  );
+};
+
+export const permanentDeleteSparePart = async (partId: string, performerUsername: string): Promise<void> => {
+  // Try server REST API call first
+  try {
+    const res = await fetch(`${API_URL}/api/inventory/${partId}/permanent`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: performerUsername })
+    });
+    if (res.ok) {
+      console.log(`[DB API] Permanently deleted ${partId} via Express API.`);
+      return;
+    }
+  } catch (err: any) {
+    console.warn(`[DB API] Permanent delete API failed: ${err.message}. Falling back to Firestore directly.`);
+  }
+
+  // Fallback to direct Firestore write
+  const ref = doc(db, 'inventory', partId);
+  await deleteDoc(ref);
+
+  // Sync to local storage
+  try {
+    const existingStr = localStorage.getItem('spareshare_inventory');
+    const existingList: SparePart[] = existingStr ? JSON.parse(existingStr) : [];
+    const filtered = existingList.filter(p => p.id !== partId);
+    localStorage.setItem('spareshare_inventory', JSON.stringify(filtered));
+  } catch (err) {
+    console.warn("[DB Fallback] Failed to update copy in localStorage:", err);
+  }
+
+  // Log action
+  await logAction(
+    performerUsername,
+    'DELETED',
+    'inventory',
+    partId,
+    `Permanently deleted item: ${partId}`,
+    {
+      userName: performerUsername,
+      plantId: 'System',
+      plantName: 'System',
+      changes: { permanent_delete: true }
+    }
   );
 };

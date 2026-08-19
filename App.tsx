@@ -21,6 +21,15 @@ import { AuditLogs } from './components/AuditLogs';
 import { UploadPreviewModal } from './components/UploadPreviewModal';
 import { ExcelParseResult } from './services/excelService';
 
+// Tab Display Names Mapping
+const tabDisplayNames: Record<string, string> = {
+  dashboard: 'Dashboard',
+  inventory: 'Inventory',
+  orders: 'Orders',
+  users: 'Users',
+  audit: 'Edit History'
+};
+
 // Factory Configuration
 const normalizeImageUrl = (url: string | undefined): string | undefined => {
   if (!url) return url;
@@ -1374,7 +1383,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
                     <div className="relative flex items-center justify-center shrink-0 w-5 h-5">
                       <Icon className={`w-5 h-5 ${isActive ? 'text-blue-600 font-black' : 'text-gray-400 group-hover:text-gray-600'}`} />
                     </div>
-                    <span className="truncate animate-in fade-in duration-200">{tab}</span>
+                    <span className="truncate animate-in fade-in duration-200">{tabDisplayNames[tab] || tab}</span>
                     {count > 0 && (
                       <span className="ml-auto flex h-5 px-1.5 min-w-[20px] items-center justify-center rounded-full bg-red-500 text-[10px] text-white font-bold border border-white shadow-sm">
                         {count > 9 ? '9+' : count}
@@ -1519,7 +1528,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
                     ? 'bg-white shadow border-l-4 border-blue-600 pl-2 text-blue-600 font-black' 
                     : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'}
                 `}
-                title={isSidebarCollapsed ? tab : undefined}
+                title={isSidebarCollapsed ? tabDisplayNames[tab] || tab : undefined}
               >
                 <div className="relative flex items-center justify-center shrink-0 w-5 h-5">
                   <Icon className={`w-5 h-5 ${isActive ? 'text-blue-600 font-black' : 'text-gray-400 group-hover:text-gray-600'}`} />
@@ -1531,7 +1540,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
                 </div>
                 
                 {!isSidebarCollapsed && (
-                  <span className="truncate animate-in fade-in duration-200">{tab}</span>
+                  <span className="truncate animate-in fade-in duration-200">{tabDisplayNames[tab] || tab}</span>
                 )}
                 
                 {!isSidebarCollapsed && count > 0 && (
@@ -2220,7 +2229,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
                   )}
                   {activeTab === 'orders' && <OrderManagement currentUser={currentUser} allParts={parts} />}
                   {activeTab === 'users' && <UserManagement currentUser={currentUser} />}
-                  {activeTab === 'audit' && <AuditLogs />}
+                  {activeTab === 'audit' && <AuditLogs currentUser={currentUser} />}
                 </>
               )}
             </div>

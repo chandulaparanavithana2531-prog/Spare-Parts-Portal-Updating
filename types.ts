@@ -23,6 +23,8 @@ export interface SparePart {
   consumptionValue?: number;
   fsnClassification?: 'Fast' | 'Slow' | 'Non-moving';
   photoPending?: boolean;
+  is_deleted?: boolean;
+  deleted_at?: number | null;
 }
 
 export interface CartItem extends SparePart {
@@ -101,10 +103,16 @@ export interface AuditLog {
   id: string;
   timestamp: number;
   userId: string;
-  action: AuditAction;
-  entityType: 'inventory' | 'order' | 'user' | 'audit_logs' | 'historical_consumption';
+  action: AuditAction | string;
+  entityType: string;
   entityId: string;
   details: string;
+  user_id?: string;
+  user_name?: string;
+  plant_id?: string;
+  plant_name?: string;
+  changes?: string | null;
+  created_at?: number;
 }
 
 export interface HistoricalConsumptionRecord {
