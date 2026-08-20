@@ -10,7 +10,6 @@ import { DashboardStats } from './components/DashboardStats';
 import { InventoryTable } from './components/InventoryTable';
 import materialImages from './material_images.json';
 import { AIInsights } from './components/AIInsights';
-import { ChatBot } from './components/ChatBot';
 import { Login } from './components/Login';
 import { OrderManagement } from './components/OrderManagement';
 import { CartDrawer } from './components/CartDrawer';
@@ -520,7 +519,6 @@ function App() {
   });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
-  const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
 
   useEffect(() => {
     if (isMobileMenuOpen) {
@@ -608,7 +606,6 @@ function App() {
     setCartItems([]);
     setIsMobileMenuOpen(false);
     setIsCartOpen(false);
-    setIsChatOpen(false);
     setActiveTab('dashboard');
   };
 
@@ -1394,27 +1391,6 @@ Ensure the Excel format is correct and you have a stable internet connection.
                 );
               })}
 
-              {/* AI Assistant Drawer Trigger */}
-              <button
-                onClick={() => {
-                  setIsChatOpen(!isChatOpen);
-                  setIsMobileMenuOpen(false);
-                }}
-                className={`
-                  w-full flex items-center gap-3 px-3 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all duration-200 cursor-pointer relative group
-                  ${isChatOpen 
-                    ? 'bg-blue-50 text-blue-600 border-l-4 border-blue-600 pl-2 text-blue-600 font-black' 
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'}
-                `}
-              >
-                <div className="relative flex items-center justify-center shrink-0 w-5 h-5">
-                  <Sparkles className={`w-5 h-5 ${isChatOpen ? 'text-blue-600 font-black animate-pulse' : 'text-gray-400 group-hover:text-gray-600'}`} />
-                </div>
-                <span className="truncate animate-in fade-in duration-200">AI Assistant</span>
-                <span className="ml-auto text-[9px] font-black uppercase bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-md scale-90">
-                  AI
-                </span>
-              </button>
             </div>
 
             {/* Bottom part: User Profile, Theme, Cart, and Logout */}
@@ -1553,29 +1529,6 @@ Ensure the Excel format is correct and you have a stable internet connection.
             );
           })}
 
-          {/* AI Assistant Sidebar Trigger */}
-          <button
-            onClick={() => setIsChatOpen(!isChatOpen)}
-            className={`
-              w-full flex items-center gap-3 px-3 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all duration-200 cursor-pointer relative group
-              ${isChatOpen 
-                ? 'bg-blue-50 text-blue-600 border-l-4 border-blue-600 pl-2 text-blue-600 font-black' 
-                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'}
-            `}
-            title={isSidebarCollapsed ? "AI Assistant" : undefined}
-          >
-            <div className="relative flex items-center justify-center shrink-0 w-5 h-5">
-              <Sparkles className={`w-5 h-5 ${isChatOpen ? 'text-blue-600 font-black animate-pulse' : 'text-gray-400 group-hover:text-gray-600'}`} />
-            </div>
-            {!isSidebarCollapsed && (
-              <span className="truncate animate-in fade-in duration-200">AI Assistant</span>
-            )}
-            {!isSidebarCollapsed && (
-              <span className="ml-auto text-[9px] font-black uppercase bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-md scale-90">
-                AI
-              </span>
-            )}
-          </button>
         </div>
 
         {/* Bottom part: User Profile, Theme, Cart, and Logout */}
@@ -2277,13 +2230,6 @@ Ensure the Excel format is correct and you have a stable internet connection.
         }
       </main >
 
-      <AIInsights
-        data={filteredParts}
-        isOpen={showAI}
-        onClose={() => setShowAI(false)}
-      />
-
-      <ChatBot allParts={parts} isOpen={isChatOpen} setIsOpen={setIsChatOpen} />
 
       <CartDrawer
         isOpen={isCartOpen}
