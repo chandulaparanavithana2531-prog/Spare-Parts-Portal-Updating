@@ -613,7 +613,7 @@ function App() {
   const [dashboardSubTab, setDashboardSubTab] = useState<'overview' | 'consumption'>('overview');
 
   // System Reports (SAP / Oracle) States
-  const [manageDataTab, setManageDataTab] = useState<'excel' | 'system' | 'history' | 'upload_history'>('excel');
+  const [manageDataTab, setManageDataTab] = useState<'excel' | 'system'>('excel');
   const [uploadHistory, setUploadHistory] = useState<UploadHistoryRecord[]>(() => {
     try {
       const local = localStorage.getItem('spareshare_uploadHistory');
@@ -1715,22 +1715,6 @@ Ensure the Excel format is correct and you have a stable internet connection.
               >
                 System Reports
               </button>
-              <button
-                onClick={() => { setManageDataTab('history'); setReportFeedback(null); setHistoryFeedback(null); }}
-                className={`flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg transition-all ${
-                  manageDataTab === 'history' ? 'bg-white text-blue-600 shadow' : 'text-gray-400 hover:text-gray-600'
-                }`}
-              >
-                3-Year History Import
-              </button>
-              <button
-                onClick={() => { setManageDataTab('upload_history'); setReportFeedback(null); setHistoryFeedback(null); }}
-                className={`flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg transition-all ${
-                  manageDataTab === 'upload_history' ? 'bg-white text-blue-600 shadow' : 'text-gray-400 hover:text-gray-600'
-                }`}
-              >
-                Upload History
-              </button>
             </div>
 
             {manageDataTab === 'excel' ? (
@@ -1740,7 +1724,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
                   <FactoryCard key={factory.id} factory={factory} />
                 ))}
               </div>
-            ) : manageDataTab === 'system' ? (
+            ) : (
               /* Daily System Reports (SAP / Oracle) Form */
               <div className="bg-white rounded-3xl border border-gray-200/50 p-8 shadow-sm max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-300">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -1843,181 +1827,6 @@ Ensure the Excel format is correct and you have a stable internet connection.
                     </div>
                   </div>
                 )}
-              </div>
-            ) : manageDataTab === 'history' ? (
-              /* 3-Year Historical Consumption Upload Form */
-              <div className="bg-white rounded-3xl border border-gray-200/50 p-8 shadow-sm max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-300">
-                <div className="space-y-4">
-                  <div>
-                    <h3 className="text-base font-bold text-gray-900">Upload 3-Year Historical Consumption Log</h3>
-                    <p className="text-xs text-gray-500 mt-1 font-semibold">Select a CSV or Excel file containing the last 3 years of consumption data. The records will be automatically grouped and mapped to the 4 factories.</p>
-                  </div>
-                  
-                  <div className="p-4 bg-blue-50/50 border border-blue-100 rounded-2xl text-xs font-semibold text-blue-800 leading-relaxed">
-                    <strong>Expected Columns:</strong> Factory Name (or Plant / Location), Year (e.g. 2023, 2024, 2025), Qty Consumed (or Quantity), Consumption Value (or Cost / Amount in Rs.)
-                  </div>
-
-                  {/* Target Factory Selector */}
-                  <div className="space-y-2 max-w-md">
-                    <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">Target Factory</label>
-                    <select
-                      value={selectedHistoryFactory}
-                      onChange={(e) => { setSelectedHistoryFactory(e.target.value); setHistoryFeedback(null); }}
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 outline-none text-sm transition-all cursor-pointer font-semibold text-gray-700"
-                    >
-                      <option value="All">All Factories (Auto-detect from file)</option>
-                      {factories.map(f => <option key={f.id} value={f.name}>{f.name}</option>)}
-                    </select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">Select & Upload Historical File</label>
-                    <label className={`
-                      w-full flex items-center justify-center gap-2 px-4 py-4 bg-blue-50 text-blue-600 border-2 border-dashed border-blue-200 hover:border-blue-400 rounded-xl text-sm font-bold text-center cursor-pointer transition-all duration-200
-                      ${isProcessingHistory ? 'opacity-50 pointer-events-none' : ''}
-                    `}>
-                      {isProcessingHistory ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          <span>Processing history log...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="w-4 h-4" />
-                          <span>Choose History Excel/CSV</span>
-                        </>
-                      )}
-                      <input
-                        id="history-upload-input"
-                        type="file"
-                        accept=".xlsx, .xls, .csv"
-                        onChange={handleHistoricalConsumptionUpload}
-                        className="hidden"
-                        disabled={isProcessingHistory}
-                      />
-                    </label>
-                  </div>
-                </div>
-
-                {historyFeedback && (
-                  <div className="mt-6 p-5 bg-green-50 border border-green-100 text-green-800 rounded-2xl flex items-start gap-3 animate-in fade-in zoom-in duration-200">
-                    <CheckCircle className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
-                    <div>
-                      <h4 className="text-xs font-black uppercase tracking-wider text-green-900">Historical Import Complete</h4>
-                      <p className="text-xs mt-1 leading-relaxed font-semibold">{historyFeedback}</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              /* Upload History list */
-              <div className="bg-white rounded-3xl border border-gray-200/50 p-8 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-                  <div>
-                    <h3 className="text-base font-bold text-gray-900">Upload History & Reversion Logs</h3>
-                    <p className="text-xs text-gray-500 mt-1 font-semibold">View all imported datasets and system reports. You can revert any upload to restore the inventory values to their previous state.</p>
-                  </div>
-                  <button
-                    onClick={async () => {
-                      setLoadingDB(true);
-                      try {
-                        const historyLogs = await getUploadHistory();
-                        setUploadHistory(historyLogs);
-                      } catch (e) {
-                        console.error(e);
-                      } finally {
-                        setLoadingDB(false);
-                      }
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-xs text-gray-600 rounded-xl font-bold cursor-pointer transition-all"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    Refresh Logs
-                  </button>
-                </div>
-
-                <div className="overflow-x-auto">
-                  {uploadHistory.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-12 text-gray-400 space-y-2">
-                      <Database className="w-8 h-8 text-gray-300" />
-                      <span className="text-xs font-bold">No upload history records found.</span>
-                      <p className="text-[10px] text-center max-w-[280px] leading-normal font-medium font-semibold">New uploads will be logged here with option to revert changes.</p>
-                    </div>
-                  ) : (
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="border-b border-gray-100 text-[10px] font-black uppercase text-gray-400 tracking-wider">
-                          <th className="pb-3 pl-4">Time</th>
-                          <th className="pb-3">User</th>
-                          <th className="pb-3">Target Factory</th>
-                          <th className="pb-3">Source/File</th>
-                          <th className="pb-3">Report Type</th>
-                          <th className="pb-3 text-center">Items Affected</th>
-                          <th className="pb-3 pr-4 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100 font-semibold text-gray-700">
-                        {uploadHistory.map((item) => {
-                          const dateStr = new Date(item.timestamp).toLocaleString();
-                          const prevCount = Object.keys(item.previousState || {}).length;
-                          const isReverting = isRevertingUpload === item.id;
-                          
-                          return (
-                            <tr key={item.id} className="hover:bg-gray-50/50 transition-colors">
-                              <td className="py-4 pl-4 font-bold text-gray-900">{dateStr}</td>
-                              <td className="py-4">{item.uploadedBy}</td>
-                              <td className="py-4">
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[10px] font-bold">
-                                  {item.factoryId}
-                                </span>
-                              </td>
-                              <td className="py-4 truncate max-w-[150px]" title={item.fileName}>
-                                {item.fileName}
-                              </td>
-                              <td className="py-4">
-                                <span className="uppercase text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
-                                  {item.reportType}
-                                </span>
-                              </td>
-                              <td className="py-4 text-center font-bold text-gray-900">{prevCount}</td>
-                              <td className="py-4 pr-4 text-right">
-                                <button
-                                  onClick={async () => {
-                                    const confirmRevert = confirm(
-                                      `Are you sure you want to revert this upload? \n\nThis will restore the previous stock and consumption values for the ${prevCount} affected items in ${item.factoryId}, and delete any new catalog items added by this file.`
-                                    );
-                                    if (confirmRevert) {
-                                      setIsRevertingUpload(item.id);
-                                      try {
-                                        await revertUpload(item.id, currentUser?.username || 'unknown');
-                                        await refreshData();
-                                        alert("Upload successfully reverted and database restored!");
-                                      } catch (err) {
-                                        console.error(err);
-                                        alert(`Reversion failed: ${(err as any).message || String(err)}`);
-                                      } finally {
-                                        setIsRevertingUpload(null);
-                                      }
-                                    }
-                                  }}
-                                  disabled={isReverting}
-                                  className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer disabled:opacity-50"
-                                  title="Revert & Delete Upload Data"
-                                >
-                                  {isReverting ? (
-                                    <RefreshCw className="w-4 h-4 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="w-4 h-4" />
-                                  )}
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
               </div>
             )}
           </div>
