@@ -25,6 +25,8 @@ export interface SparePart {
   photoPending?: boolean;
   is_deleted?: boolean;
   deleted_at?: number | null;
+  lastStockUpdateDate?: string;
+  lastStockUpdateUser?: string;
 }
 
 export interface CartItem extends SparePart {
@@ -133,6 +135,7 @@ export interface UploadHistoryRecord {
   factoryId: string;
   system?: string;
   reportType: string;
+  reportDate?: string;
   previousState: {
     [partId: string]: {
       onHand: number;

@@ -797,7 +797,8 @@ export const saveSystemReport = async (
   factoryId: string,
   reportType: string,
   updatedParts: Partial<SparePart>[],
-  performerUsername: string
+  performerUsername: string,
+  reportDate?: string
 ): Promise<{ updatedCount: number; deductedCount: number }> => {
   const BATCH_SIZE = 450;
   let updatedCount = 0;
@@ -842,12 +843,18 @@ export const saveSystemReport = async (
             consumptionValue: newConsumptionValue
           };
 
-          batch.update(ref, {
+          const updateObj: any = {
             onHand: newOnHand,
             totalValue: newTotalValue,
             consumptionQty: newConsumptionQty,
-            consumptionValue: newConsumptionValue
-          });
+            consumptionValue: newConsumptionValue,
+            lastStockUpdateUser: performerUsername
+          };
+          if (reportDate) {
+            updateObj.lastStockUpdateDate = reportDate;
+          }
+
+          batch.update(ref, updateObj);
           deductedCount++;
         }
       } else {
@@ -856,13 +863,17 @@ export const saveSystemReport = async (
         if (docSnap.exists()) {
           const currentData = docSnap.data() as SparePart;
           const updateData: any = {
-            onHand: partUpdate.onHand
+            onHand: partUpdate.onHand,
+            lastStockUpdateUser: performerUsername
           };
           if (partUpdate.totalValue !== undefined && partUpdate.totalValue > 0) {
             updateData.totalValue = partUpdate.totalValue;
             updateData.unitCost = partUpdate.unitCost;
           } else {
             updateData.totalValue = partUpdate.onHand! * currentData.unitCost;
+          }
+          if (reportDate) {
+            updateData.lastStockUpdateDate = reportDate;
           }
 
           previousState[partId] = {
@@ -897,7 +908,9 @@ export const saveSystemReport = async (
             spareType: 'General',
             categoryName: '-',
             machine: '-',
-            criticality: '-'
+            criticality: '-',
+            lastStockUpdateUser: performerUsername,
+            ...(reportDate ? { lastStockUpdateDate: reportDate } : {})
           };
 
           previousState[partId] = { isNew: true };
@@ -930,7 +943,8 @@ export const saveSystemReport = async (
         factoryId: factoryId,
         reportType: reportType,
         previousState,
-        updatedState
+        updatedState,
+        ...(reportDate ? { reportDate } : {})
       };
       await setDoc(historyRef, historyRec);
     } catch (historyErr) {

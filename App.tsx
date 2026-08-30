@@ -7,7 +7,7 @@ import { SparePart, User, CartItem, HistoricalConsumptionRecord, UploadHistoryRe
 import { saveInventory, getInventory, deleteFactoryData, getOrders, getPendingUsers, saveSystemReport, saveHistoricalConsumption, getHistoricalConsumption, getUploadHistory, revertUpload, syncGoogleSheets } from './services/db';
 import { fetchBackendParts, fetchBackendFactories, mergeAndDeduplicate, fetchHistoricalConsumption, uploadHistoricalConsumptionFile } from './services/apiService';
 import { DashboardStats } from './components/DashboardStats';
-import { InventoryTable } from './components/InventoryTable';
+import { InventoryTable, getFactoryBadgeClass } from './components/InventoryTable';
 import materialImages from './material_images.json';
 import { AIInsights } from './components/AIInsights';
 import { Login } from './components/Login';
@@ -26,7 +26,8 @@ const tabDisplayNames: Record<string, string> = {
   inventory: 'Inventory',
   orders: 'Orders',
   users: 'Users',
-  audit: 'Edit History'
+  audit: 'Edit History',
+  'manage-data': 'Manage Data'
 };
 
 // Factory Configuration
@@ -548,7 +549,7 @@ function App() {
     }
   });
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'orders' | 'users' | 'audit'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'orders' | 'users' | 'audit' | 'manage-data'>('dashboard');
   const [processingFactory, setProcessingFactory] = useState<string | null>(null);
   const [showAI, setShowAI] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -639,6 +640,35 @@ function App() {
   const [selectedReportType, setSelectedReportType] = useState('MB52');
   const [reportFeedback, setReportFeedback] = useState<string | null>(null);
   const [isProcessingReport, setIsProcessingReport] = useState(false);
+  const [selectedReportDate, setSelectedReportDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+
+  // Preselect standard user's factory affiliation
+  useEffect(() => {
+    if (currentUser) {
+      if (currentUser.role === 'user') {
+        if (currentUser.factoryAffiliation && selectedReportFactory !== currentUser.factoryAffiliation) {
+          setSelectedReportFactory(currentUser.factoryAffiliation);
+        }
+      }
+    }
+  }, [currentUser, selectedReportFactory]);
+
+  const handleRevertUpload = async (historyId: string) => {
+    if (!currentUser || currentUser.role !== 'admin') return;
+    if (!confirm("Are you sure you want to revert this upload? This will roll back the stock count changes to their exact previous state.")) return;
+    
+    setIsRevertingUpload(historyId);
+    try {
+      await revertUpload(historyId, currentUser.username);
+      alert("Upload successfully reverted!");
+      await refreshData();
+    } catch (err: any) {
+      console.error("Revert failed:", err);
+      alert(`Failed to revert upload: ${err.message || String(err)}`);
+    } finally {
+      setIsRevertingUpload(null);
+    }
+  };
 
   const handleSystemReportUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
@@ -656,7 +686,8 @@ function App() {
         selectedReportFactory,
         result.reportType,
         result.updatedParts,
-        currentUser?.username || 'unknown'
+        currentUser?.username || 'unknown',
+        selectedReportDate
       );
       
       // 3. Refresh display catalog data
@@ -1350,7 +1381,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
 
             {/* Middle part: Navigation Menu Links */}
             <div className="flex-1 px-3 py-4 space-y-1 overflow-y-auto min-h-0">
-              {(['dashboard', 'inventory', 'orders', 'users', 'audit'] as const).map((tab) => {
+              {(['dashboard', 'inventory', 'orders', 'users', 'audit', 'manage-data'] as const).map((tab) => {
                 if ((tab === 'users' || tab === 'audit') && currentUser.role !== 'admin') return null;
                 
                 const isActive = activeTab === tab;
@@ -1359,7 +1390,8 @@ Ensure the Excel format is correct and you have a stable internet connection.
                   inventory: SlidersHorizontal,
                   orders: ShoppingBag,
                   users: Users,
-                  audit: ShieldAlert
+                  audit: ShieldAlert,
+                  'manage-data': Database
                 };
                 const Icon = icons[tab];
                 const count = tab === 'orders' ? notificationCounts.orders : (tab === 'users' ? notificationCounts.users : 0);
@@ -1481,7 +1513,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
 
         {/* Middle part: Navigation Menu Links */}
         <div className="flex-1 px-3 py-4 space-y-1 overflow-y-auto min-h-0">
-          {(['dashboard', 'inventory', 'orders', 'users', 'audit'] as const).map((tab) => {
+          {(['dashboard', 'inventory', 'orders', 'users', 'audit', 'manage-data'] as const).map((tab) => {
             if ((tab === 'users' || tab === 'audit') && currentUser.role !== 'admin') return null;
             
             const isActive = activeTab === tab;
@@ -1490,7 +1522,8 @@ Ensure the Excel format is correct and you have a stable internet connection.
               inventory: SlidersHorizontal,
               orders: ShoppingBag,
               users: Users,
-              audit: ShieldAlert
+              audit: ShieldAlert,
+              'manage-data': Database
             };
             const Icon = icons[tab];
             const count = tab === 'orders' ? notificationCounts.orders : (tab === 'users' ? notificationCounts.users : 0);
@@ -1637,8 +1670,8 @@ Ensure the Excel format is correct and you have a stable internet connection.
 
         <main className="flex-1 p-4 md:p-8 space-y-6 overflow-y-auto">
 
-        {/* State: No Data or Explicit Upload Mode (Only Admin can see upload modal) */}
-        {(parts.length === 0 || showUploadModal) && currentUser.role === 'admin' ? (
+        {/* State: Legacy overlay skipped, now routed via activeTab */}
+        {false ? (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6">
             {/* Header */}
             <div className="flex items-center justify-between mb-2">
@@ -1833,45 +1866,47 @@ Ensure the Excel format is correct and you have a stable internet connection.
         ) : (
           <>
             {/* Control Bar */}
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-white/80 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
-
-              {/* Search & Actions */}
-              <div className="flex flex-col sm:flex-row items-center gap-4 flex-1">
-                {activeTab !== 'orders' && (
-                  <div className="relative flex-1 w-full max-w-sm group">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-focus-within:text-blue-500 transition-colors" />
-                    <input
-                      type="text"
-                      placeholder="Search parts catalog..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-12 pr-4 py-3 bg-gray-50/50 border border-gray-200/60 rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 focus:bg-white outline-none text-sm transition-all shadow-inner font-medium"
-                    />
-                  </div>
-                )}
-
-                {/* Admin Quick Actions */}
-                {currentUser.role === 'admin' && activeTab !== 'orders' && (
-                  <div className="flex items-center gap-3 w-full sm:w-auto">
-                    <button
-                      onClick={() => setShowAddItemModal(true)}
-                      className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs font-black uppercase tracking-widest rounded-2xl hover:shadow-xl hover:shadow-blue-200 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Add Item
-                    </button>
-
-                    <button
-                      onClick={() => setShowUploadModal(true)}
-                      className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 bg-white border border-gray-200 text-gray-700 text-xs font-black uppercase tracking-widest rounded-2xl hover:bg-gray-50 hover:border-gray-300 hover:shadow-md transition-all duration-300"
-                    >
-                      <Database className="w-4 h-4" />
-                      Manage Data
-                    </button>
-                  </div>
-                )}
+            {activeTab !== 'manage-data' && (
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-white/80 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+  
+                {/* Search & Actions */}
+                <div className="flex flex-col sm:flex-row items-center gap-4 flex-1">
+                  {activeTab !== 'orders' && (
+                    <div className="relative flex-1 w-full max-w-sm group">
+                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-focus-within:text-blue-500 transition-colors" />
+                      <input
+                        type="text"
+                        placeholder="Search parts catalog..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-12 pr-4 py-3 bg-gray-50/50 border border-gray-200/60 rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 focus:bg-white outline-none text-sm transition-all shadow-inner font-medium"
+                      />
+                    </div>
+                  )}
+  
+                  {/* Admin Quick Actions */}
+                  {currentUser.role === 'admin' && activeTab !== 'orders' && (
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                      <button
+                        onClick={() => setShowAddItemModal(true)}
+                        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs font-black uppercase tracking-widest rounded-2xl hover:shadow-xl hover:shadow-blue-200 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Add Item
+                      </button>
+  
+                      <button
+                        onClick={() => setActiveTab('manage-data')}
+                        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 bg-white border border-gray-200 text-gray-700 text-xs font-black uppercase tracking-widest rounded-2xl hover:bg-gray-50 hover:border-gray-300 hover:shadow-md transition-all duration-300"
+                      >
+                        <Database className="w-4 h-4" />
+                        Manage Data
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Faceted Filter Bar (Inventory View Only) */}
             {activeTab === 'inventory' && (
@@ -2031,6 +2066,292 @@ Ensure the Excel format is correct and you have a stable internet connection.
                   {activeTab === 'orders' && <OrderManagement currentUser={currentUser} allParts={parts} />}
                   {activeTab === 'users' && <UserManagement currentUser={currentUser} />}
                   {activeTab === 'audit' && <AuditLogs currentUser={currentUser} />}
+                  {activeTab === 'manage-data' && (
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6">
+                      {/* Header */}
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <h2 className="text-2xl font-bold text-gray-900">Manage Factory Data</h2>
+                          <p className="text-gray-500 text-sm mt-1">
+                            {currentUser.role === 'admin' 
+                              ? "Upload parts inventories, synchronize Google Sheets, or ingest daily/weekly system reports."
+                              : "Weekly Report Ingestion System. Upload your plant's SAP or Oracle inventory report to keep the portal's stock counts updated."
+                            }
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Google Sheets Sync Banner - Admin Only */}
+                      {currentUser.role === 'admin' && (
+                        <div className="bg-gradient-to-r from-emerald-50/50 to-teal-50/50 border border-emerald-100/80 rounded-[2rem] p-6 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                          <div className="flex gap-4">
+                            <div className="w-12 h-12 rounded-full bg-emerald-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-emerald-200">
+                              <Database className="w-6 h-6" />
+                            </div>
+                            <div>
+                              <h3 className="font-bold text-gray-900 text-[15px]">Google Sheets Direct Sync</h3>
+                              <p className="text-xs text-gray-500 mt-1">
+                                Synchronize parts inventories directly from the master Google Spreadsheet (Lanka Tiles, Lanka Wall Tiles, Rocell Horana, and Rocell Eheliyagoda).
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={async () => {
+                              if (confirm("Are you sure you want to trigger a Google Sheets synchronization? This will run the backend sync process.")) {
+                                setIsSyncingSheets(true);
+                                try {
+                                  await syncGoogleSheets(currentUser.username);
+                                  alert("Synchronization started successfully in the background. It will reload the database automatically when finished.");
+                                  setTimeout(async () => {
+                                    await refreshData();
+                                  }, 5000);
+                                } catch (e: any) {
+                                  alert(`Sync trigger failed: ${e.message}`);
+                                } finally {
+                                  setIsSyncingSheets(false);
+                                }
+                              }
+                            }}
+                            disabled={isSyncingSheets}
+                            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-emerald-100 hover:shadow-xl hover:shadow-emerald-200 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300 flex items-center gap-2 cursor-pointer shrink-0"
+                          >
+                            <RefreshCw className={`w-4 h-4 ${isSyncingSheets ? 'animate-spin' : ''}`} />
+                            {isSyncingSheets ? 'Syncing...' : 'Sync Master Spreadsheet'}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Inner Sub-Tabs Segmented Control - Admin Only */}
+                      {currentUser.role === 'admin' && (
+                        <div className="flex p-1 bg-gray-100/60 rounded-xl border border-gray-200/50 max-w-2xl">
+                          <button
+                            onClick={() => { setManageDataTab('excel'); setReportFeedback(null); setHistoryFeedback(null); }}
+                            className={`flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg transition-all ${
+                              manageDataTab === 'excel' ? 'bg-white text-blue-600 shadow' : 'text-gray-400 hover:text-gray-600'
+                            }`}
+                          >
+                            Excel Templates
+                          </button>
+                          <button
+                            onClick={() => { setManageDataTab('system'); setReportFeedback(null); setHistoryFeedback(null); }}
+                            className={`flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg transition-all ${
+                              manageDataTab === 'system' ? 'bg-white text-blue-600 shadow' : 'text-gray-400 hover:text-gray-600'
+                            }`}
+                          >
+                            System Reports
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Main data view content */}
+                      {currentUser.role === 'user' || manageDataTab === 'system' ? (
+                        /* Daily System Reports (SAP / Oracle) Form */
+                        <div className="bg-white rounded-3xl border border-gray-200/50 p-8 shadow-sm max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-300">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                            {/* Factory Selection */}
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">Target Factory</label>
+                              <select
+                                value={selectedReportFactory}
+                                onChange={(e) => { setSelectedReportFactory(e.target.value); setReportFeedback(null); }}
+                                disabled={currentUser.role !== 'admin'}
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 outline-none text-sm transition-all cursor-pointer font-semibold text-gray-700 disabled:opacity-75 disabled:cursor-not-allowed disabled:bg-gray-100"
+                              >
+                                {factories.map(f => <option key={f.id} value={f.name}>{f.name}</option>)}
+                              </select>
+                            </div>
+
+                            {/* System Selection */}
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">ERP System Vendor</label>
+                              <div className="flex bg-gray-50 p-1.5 rounded-xl border border-gray-200">
+                                <button
+                                  type="button"
+                                  onClick={() => { setSelectedSystem('SAP'); setSelectedReportType('MB52'); setReportFeedback(null); }}
+                                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+                                    selectedSystem === 'SAP' ? 'bg-white text-blue-600 shadow' : 'text-gray-500 hover:text-gray-700'
+                                  }`}
+                                >
+                                  SAP ERP
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setSelectedSystem('Oracle'); setSelectedReportType('SUBINVENTORY'); setReportFeedback(null); }}
+                                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+                                    selectedSystem === 'Oracle' ? 'bg-white text-blue-600 shadow' : 'text-gray-500 hover:text-gray-700'
+                                  }`}
+                                >
+                                  Oracle ERP
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Report Date Selection */}
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">Report Date</label>
+                              <input
+                                type="date"
+                                value={selectedReportDate}
+                                onChange={(e) => { setSelectedReportDate(e.target.value); setReportFeedback(null); }}
+                                className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 outline-none text-sm transition-all cursor-pointer font-semibold text-gray-700"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                            {/* Report Type Select */}
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">System Report Type</label>
+                              <select
+                                value={selectedReportType}
+                                onChange={(e) => { setSelectedReportType(e.target.value); setReportFeedback(null); }}
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 outline-none text-sm transition-all cursor-pointer font-semibold text-gray-700"
+                              >
+                                {selectedSystem === 'SAP' ? (
+                                  <>
+                                    <option value="MB52">MB52 — Warehouse Stock Report (Update)</option>
+                                    <option value="MB51">MB51 — Material Document List (Consumption)</option>
+                                  </>
+                                ) : (
+                                  <>
+                                    <option value="SUBINVENTORY">Subinventory Quantity Report (Update)</option>
+                                    <option value="TRANSACTION">Material Transaction Report (Consumption)</option>
+                                  </>
+                                )}
+                              </select>
+                            </div>
+
+                            {/* File Upload Actions */}
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">Select & Upload File</label>
+                              <label className={`
+                                w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-50 text-blue-600 border-2 border-dashed border-blue-200 hover:border-blue-400 rounded-xl text-sm font-bold text-center cursor-pointer transition-all duration-200
+                                ${isProcessingReport ? 'opacity-50 pointer-events-none' : ''}
+                              `}>
+                                {isProcessingReport ? (
+                                  <>
+                                    <RefreshCw className="w-4 h-4 animate-spin" />
+                                    <span>Processing report...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Upload className="w-4 h-4" />
+                                    <span>Choose Report Excel/CSV</span>
+                                  </>
+                                )}
+                                <input
+                                  type="file"
+                                  accept=".xlsx, .xls, .csv"
+                                  onChange={handleSystemReportUpload}
+                                  className="hidden"
+                                  disabled={isProcessingReport}
+                                />
+                              </label>
+                            </div>
+                          </div>
+
+                          {reportFeedback && (
+                            <div className="mt-6 p-5 bg-green-50 border border-green-100 text-green-800 rounded-2xl flex items-start gap-3 animate-in fade-in zoom-in duration-200">
+                              <CheckCircle className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
+                              <div>
+                                <h4 className="text-xs font-black uppercase tracking-wider text-green-900">Upload Processed Successfully</h4>
+                                <p className="text-xs mt-1 leading-relaxed font-semibold">{reportFeedback}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        /* Standard Excel Grid Cards - Admin Only */
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                          {factories.map(factory => (
+                            <FactoryCard key={factory.id} factory={factory} />
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Recent Uploads Table */}
+                      <div className="bg-white rounded-3xl border border-gray-200/50 p-6 shadow-sm">
+                        <h3 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
+                          <Database className="w-4 h-4 text-blue-600" />
+                          Recent Uploads History
+                        </h3>
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full divide-y divide-gray-200 text-xs">
+                            <thead className="bg-gray-50 font-bold text-gray-600 uppercase">
+                              <tr>
+                                <th className="px-4 py-3 text-left">Time</th>
+                                <th className="px-4 py-3 text-left">Plant</th>
+                                <th className="px-4 py-3 text-left">ERP Report Type</th>
+                                <th className="px-4 py-3 text-left">Report Date</th>
+                                <th className="px-4 py-3 text-left">Uploaded By</th>
+                                <th className="px-4 py-3 text-left">Details</th>
+                                {currentUser.role === 'admin' && <th className="px-4 py-3 text-center">Action</th>}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200 font-semibold text-gray-700">
+                              {(() => {
+                                const filteredLogs = uploadHistory.filter(log => 
+                                  currentUser.role === 'admin' || log.factoryId === currentUser.factoryAffiliation
+                                );
+                                
+                                if (filteredLogs.length === 0) {
+                                  return (
+                                    <tr>
+                                      <td colSpan={currentUser.role === 'admin' ? 7 : 6} className="px-4 py-8 text-center text-gray-400 font-normal">
+                                        No recent uploads found.
+                                      </td>
+                                    </tr>
+                                  );
+                                }
+
+                                return filteredLogs.map((log) => {
+                                  const updatedCount = Object.keys(log.updatedState || {}).length;
+                                  const isConsumption = log.reportType.includes('MB51') || log.reportType.includes('TRANSACTION');
+                                  const detailsText = isConsumption
+                                    ? `Deducted stock for ${updatedCount} items`
+                                    : `Updated stock levels for ${updatedCount} items`;
+
+                                  const formatReportType = (rt: string) => {
+                                    if (rt.includes('MB52')) return 'SAP Stock (MB52)';
+                                    if (rt.includes('MB51')) return 'SAP Consumption (MB51)';
+                                    if (rt.includes('SUBINVENTORY')) return 'Oracle Stock (Subinventory)';
+                                    if (rt.includes('TRANSACTION')) return 'Oracle Consumption (Transaction)';
+                                    return rt;
+                                  };
+
+                                  return (
+                                    <tr key={log.id} className="hover:bg-gray-50/50">
+                                      <td className="px-4 py-3.5 whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</td>
+                                      <td className="px-4 py-3.5 whitespace-nowrap">
+                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${getFactoryBadgeClass(log.factoryId)}`}>
+                                          {log.factoryId}
+                                        </span>
+                                      </td>
+                                      <td className="px-4 py-3.5 whitespace-nowrap">{formatReportType(log.reportType)}</td>
+                                      <td className="px-4 py-3.5 whitespace-nowrap font-mono">{log.reportDate || 'N/A'}</td>
+                                      <td className="px-4 py-3.5 whitespace-nowrap">{log.uploadedBy}</td>
+                                      <td className="px-4 py-3.5">{detailsText}</td>
+                                      {currentUser.role === 'admin' && (
+                                        <td className="px-4 py-3 text-center whitespace-nowrap">
+                                          <button
+                                            onClick={() => handleRevertUpload(log.id)}
+                                            disabled={isRevertingUpload !== null}
+                                            className="px-2.5 py-1 text-[10px] font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded transition-all disabled:opacity-50"
+                                          >
+                                            {isRevertingUpload === log.id ? 'Reverting...' : 'Revert'}
+                                          </button>
+                                        </td>
+                                      )}
+                                    </tr>
+                                  );
+                                });
+                              })()}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>

@@ -413,6 +413,21 @@ export const ItemDetailsModal: React.FC<ItemDetailsModalProps> = ({ part, reserv
                                 </div>
                             </div>
 
+                            {part.lastStockUpdateDate && (
+                                <div className="space-y-1">
+                                    <div className="text-gray-500 text-xs uppercase">Last Report Update</div>
+                                    <div className="font-medium text-gray-900 flex items-center gap-1.5">
+                                        <Calendar className="w-3.5 h-3.5 text-gray-400" />
+                                        <span>{part.lastStockUpdateDate}</span>
+                                        {part.lastStockUpdateUser && (
+                                            <span className="text-[10px] text-gray-400 font-normal">
+                                                ({part.lastStockUpdateUser})
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="space-y-1">
                                 {(() => {
                                     const raw = (part.criticality || '').trim().toLowerCase();
