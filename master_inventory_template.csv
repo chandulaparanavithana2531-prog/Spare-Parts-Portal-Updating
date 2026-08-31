@@ -1,0 +1,6 @@
+Material Number,Part Number,Description,On Hand,Unit Cost,Total Value,More Than 3 Years,Over 3 Year Value,Spare Type,Sub Category,Machine Name,Criticality,Image Link 1
+100101,PN-100101,Electric Motor 5kW,10,250.00,2500.00,2,500.00,Critical,Motors,Conveyor-01,High,https://example.com/images/motor.jpg
+100102,PN-100102,Centrifugal Pump Impeller,5,120.00,600.00,0,0.00,General,Pumps,WaterPump-02,Medium,
+100103,PN-100103,Proximity Sensor M12,25,45.00,1125.00,5,225.00,General,Sensors,Packaging-04,Low,
+100104,PN-100104,Pneumatic Valve 5/2,8,85.00,680.00,1,85.00,General,Pneumatics,Assembly-02,Medium,
+100105,PN-100105,Flexible Coupling HRC150,15,35.00,525.00,0,0.00,General,Couplings,Fan-03,Low,
