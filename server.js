@@ -913,6 +913,309 @@ app.post(['/api/sync-sheets'], async (req, res) => {
   return res.json({ success: true, message: "Sync process started in the background." });
 });
 
+app.post(['/api/inventory/save-inventory'], async (req, res) => {
+  const { parts, username } = req.body;
+  if (!parts || !Array.isArray(parts)) {
+    return res.status(400).send('Missing parts payload or payload is not an array');
+  }
+
+  const performerUsername = username || 'unknown';
+  
+  try {
+    const dbJsonPath = path.join(process.cwd(), 'db.json');
+    let localData = [];
+    if (fs.existsSync(dbJsonPath)) {
+      try {
+        localData = JSON.parse(fs.readFileSync(dbJsonPath, 'utf8'));
+      } catch (err) {
+        console.warn("[Server] Failed to read db.json before save-inventory:", err.message);
+      }
+    }
+
+    const previousState = {};
+    const updatedState = {};
+
+    parts.forEach(newPart => {
+      const idx = localData.findIndex(p => p.id === newPart.id);
+      if (idx !== -1) {
+        previousState[newPart.id] = { ...localData[idx] };
+        localData[idx] = { ...localData[idx], ...newPart };
+      } else {
+        previousState[newPart.id] = { isNew: true };
+        localData.push(newPart);
+      }
+      updatedState[newPart.id] = {
+        onHand: newPart.onHand,
+        totalValue: newPart.totalValue,
+        consumptionQty: newPart.consumptionQty || 0,
+        consumptionValue: newPart.consumptionValue || 0
+      };
+    });
+
+    // Write to db.json
+    fs.writeFileSync(dbJsonPath, JSON.stringify(localData, null, 2), 'utf8');
+    console.log(`[Server] Saved ${parts.length} parts to local db.json via save-inventory API.`);
+
+    // Sync to Firestore if Admin SDK is connected
+    if (firestoreDb && parts.length > 0) {
+      try {
+        const BATCH_SIZE = 400;
+        for (let i = 0; i < parts.length; i += BATCH_SIZE) {
+          const chunk = parts.slice(i, i + BATCH_SIZE);
+          const batch = firestoreDb.batch();
+          chunk.forEach(part => {
+            const ref = firestoreDb.collection('inventory').doc(part.id);
+            batch.set(ref, part, { merge: true });
+          });
+          await batch.commit();
+        }
+        console.log(`[Firebase Admin] Synced ${parts.length} parts to Firestore via save-inventory API.`);
+
+        // Log upload history record to Firestore
+        const historyId = `rep-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        const historyRef = firestoreDb.collection('upload_history').doc(historyId);
+        await historyRef.set({
+          id: historyId,
+          timestamp: Date.now(),
+          uploadedBy: performerUsername,
+          fileName: 'Excel Template Upload',
+          factoryId: parts[0].factoryId,
+          reportType: 'EXCEL_TEMPLATE',
+          previousState: JSON.stringify(previousState),
+          updatedState: JSON.stringify(updatedState)
+        });
+
+        // Log audit action
+        const logRef = firestoreDb.collection('audit_logs').doc();
+        await logRef.set({
+          user_id: performerUsername,
+          user_name: performerUsername,
+          plant_id: parts[0].factoryId,
+          plant_name: parts[0].factoryId,
+          action: 'UPLOAD',
+          entity_type: 'inventory',
+          entity_id: parts[0].factoryId,
+          changes: JSON.stringify({ count: parts.length }),
+          created_at: Date.now(),
+          details: `Uploaded ${parts.length} items for ${parts[0].factoryId}`
+        });
+
+      } catch (firestoreErr) {
+        console.warn("[Firebase Admin Error] Failed to write parts to Firestore:", firestoreErr.message);
+      }
+    }
+
+    res.json({ success: true, message: `Successfully updated ${parts.length} items in local database.` });
+  } catch (err) {
+    console.error('[Server Save-Inventory API] Error:', err);
+    res.status(500).send(`Internal server error: ${err.message}`);
+  }
+});
+
+app.post(['/api/inventory/save-system-report'], async (req, res) => {
+  const { factoryId, reportType, updatedParts, username, reportDate } = req.body;
+  if (!factoryId || !reportType || !updatedParts || !Array.isArray(updatedParts)) {
+    return res.status(400).send('Missing factoryId, reportType, or updatedParts array');
+  }
+
+  const performerUsername = username || 'unknown';
+
+  try {
+    const dbJsonPath = path.join(process.cwd(), 'db.json');
+    let localData = [];
+    if (fs.existsSync(dbJsonPath)) {
+      try {
+        localData = JSON.parse(fs.readFileSync(dbJsonPath, 'utf8'));
+      } catch (err) {
+        console.warn("[Server] Failed to read db.json before save-system-report:", err.message);
+      }
+    }
+
+    let updatedCount = 0;
+    let deductedCount = 0;
+
+    const previousState = {};
+    const updatedState = {};
+    const firestoreUpdates = [];
+
+    updatedParts.forEach((partUpdate) => {
+      const partId = partUpdate.id;
+      const idx = localData.findIndex(p => p.id === partId);
+
+      if (reportType.includes('MB51') || reportType.includes('TRANSACTION')) {
+        // Daily Consumption: Subtract from active stock
+        if (idx !== -1) {
+          const currentData = localData[idx];
+          const consumptionQty = partUpdate.qtyMoreThan3Years || 0;
+          const newOnHand = Math.max(0, (currentData.onHand || 0) - consumptionQty);
+          const newTotalValue = newOnHand * (currentData.unitCost || 0);
+
+          const newConsumptionQty = (currentData.consumptionQty || 0) + consumptionQty;
+          const newConsumptionValue = newConsumptionQty * (currentData.unitCost || 0);
+
+          previousState[partId] = {
+            onHand: currentData.onHand || 0,
+            totalValue: currentData.totalValue || 0,
+            consumptionQty: currentData.consumptionQty || 0,
+            consumptionValue: currentData.consumptionValue || 0
+          };
+
+          updatedState[partId] = {
+            onHand: newOnHand,
+            totalValue: newTotalValue,
+            consumptionQty: newConsumptionQty,
+            consumptionValue: newConsumptionValue
+          };
+
+          const updateObj = {
+            ...currentData,
+            onHand: newOnHand,
+            totalValue: newTotalValue,
+            consumptionQty: newConsumptionQty,
+            consumptionValue: newConsumptionValue,
+            lastStockUpdateUser: performerUsername
+          };
+          if (reportDate) {
+            updateObj.lastStockUpdateDate = reportDate;
+          }
+
+          localData[idx] = updateObj;
+          firestoreUpdates.push(updateObj);
+          deductedCount++;
+        }
+      } else {
+        // Stock Report: Set or merge stock levels
+        if (idx !== -1) {
+          const currentData = localData[idx];
+          const updateData = {
+            ...currentData,
+            onHand: partUpdate.onHand || 0,
+            lastStockUpdateUser: performerUsername
+          };
+          if (partUpdate.totalValue !== undefined && partUpdate.totalValue > 0) {
+            updateData.totalValue = partUpdate.totalValue;
+            updateData.unitCost = partUpdate.unitCost;
+          } else {
+            updateData.totalValue = (partUpdate.onHand || 0) * (currentData.unitCost || 0);
+          }
+          if (reportDate) {
+            updateData.lastStockUpdateDate = reportDate;
+          }
+
+          previousState[partId] = {
+            onHand: currentData.onHand || 0,
+            totalValue: currentData.totalValue || 0,
+            consumptionQty: currentData.consumptionQty || 0,
+            consumptionValue: currentData.consumptionValue || 0
+          };
+
+          updatedState[partId] = {
+            onHand: partUpdate.onHand || 0,
+            totalValue: updateData.totalValue,
+            consumptionQty: currentData.consumptionQty || 0,
+            consumptionValue: currentData.consumptionValue || 0
+          };
+
+          localData[idx] = updateData;
+          firestoreUpdates.push(updateData);
+          updatedCount++;
+        } else {
+          // If the part does not exist, create it as a new catalog item
+          const newPart = {
+            id: partId,
+            factoryId: partUpdate.factoryId || factoryId,
+            materialNumber: partUpdate.materialNumber,
+            partNumber: partUpdate.partNumber || partUpdate.materialNumber,
+            description: partUpdate.description || 'System Spare Part',
+            qtyMoreThan3Years: 0,
+            valueMoreThan3Years: 0,
+            onHand: partUpdate.onHand || 0,
+            unitCost: partUpdate.unitCost || 0,
+            totalValue: partUpdate.totalValue || 0,
+            spareType: 'General',
+            categoryName: '-',
+            machine: '-',
+            criticality: '-',
+            lastStockUpdateUser: performerUsername,
+            ...(reportDate ? { lastStockUpdateDate: reportDate } : {})
+          };
+
+          previousState[partId] = { isNew: true };
+          updatedState[partId] = {
+            onHand: newPart.onHand,
+            totalValue: newPart.totalValue,
+            consumptionQty: 0,
+            consumptionValue: 0
+          };
+
+          localData.push(newPart);
+          firestoreUpdates.push(newPart);
+          updatedCount++;
+        }
+      }
+    });
+
+    // Write to db.json
+    fs.writeFileSync(dbJsonPath, JSON.stringify(localData, null, 2), 'utf8');
+    console.log(`[Server] Saved system report changes to local db.json. Updated: ${updatedCount}, Deducted: ${deductedCount}`);
+
+    // Sync to Firestore if Admin SDK is connected
+    if (firestoreDb && firestoreUpdates.length > 0) {
+      try {
+        const BATCH_SIZE = 400;
+        for (let i = 0; i < firestoreUpdates.length; i += BATCH_SIZE) {
+          const chunk = firestoreUpdates.slice(i, i + BATCH_SIZE);
+          const batch = firestoreDb.batch();
+          chunk.forEach(part => {
+            const ref = firestoreDb.collection('inventory').doc(part.id);
+            batch.set(ref, part, { merge: true });
+          });
+          await batch.commit();
+        }
+        console.log(`[Firebase Admin] Synced system report updates to Firestore.`);
+
+        // Log upload history record to Firestore
+        if (updatedCount > 0 || deductedCount > 0) {
+          const historyId = `rep-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+          const historyRef = firestoreDb.collection('upload_history').doc(historyId);
+          await historyRef.set({
+            id: historyId,
+            timestamp: Date.now(),
+            uploadedBy: performerUsername,
+            fileName: `${reportType} Report`,
+            factoryId: factoryId,
+            reportType: reportType,
+            previousState: JSON.stringify(previousState),
+            updatedState: JSON.stringify(updatedState),
+            ...(reportDate ? { reportDate } : {})
+          });
+
+          // Log audit action
+          const logRef = firestoreDb.collection('audit_logs').doc();
+          await logRef.set({
+            user_id: performerUsername,
+            user_name: performerUsername,
+            plant_id: factoryId,
+            plant_name: factoryId,
+            action: 'UPLOAD',
+            entity_type: 'inventory',
+            entity_id: factoryId,
+            created_at: Date.now(),
+            details: `Uploaded ${reportType} report for factory ${factoryId}. Updated: ${updatedCount}, Consumption Deducted: ${deductedCount}`
+          });
+        }
+      } catch (firestoreErr) {
+        console.warn("[Firebase Admin Error] Failed to write system report updates to Firestore:", firestoreErr.message);
+      }
+    }
+
+    res.json({ success: true, updatedCount, deductedCount });
+  } catch (err) {
+    console.error('[Server Save-System-Report API] Error:', err);
+    res.status(500).send(`Internal server error: ${err.message}`);
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`[Server] Spare Parts Backend running on port ${PORT}`);
 });

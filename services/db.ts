@@ -3,10 +3,27 @@ import { db } from './firebase';
 import { SparePart, User, Order, OrderStatus, HistoricalConsumptionRecord, UploadHistoryRecord } from '../types';
 import { logAction } from './audit';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+
 // --- Inventory Operations ---
 
 export const saveInventory = async (parts: SparePart[], performerUsername: string) => {
   console.log(`[DB] Received payload: ${parts.length} items to save.`);
+  
+  // Try server REST API call first
+  try {
+    const res = await fetch(`${API_URL}/api/inventory/save-inventory`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parts, username: performerUsername })
+    });
+    if (res.ok) {
+      console.log(`[DB API] Saved inventory via Express API.`);
+      return;
+    }
+  } catch (err: any) {
+    console.warn(`[DB API] Save inventory API failed: ${err.message}. Falling back to Firestore directly.`);
+  }
   
   // Save to local storage first as a safety backup
   try {
@@ -800,6 +817,22 @@ export const saveSystemReport = async (
   performerUsername: string,
   reportDate?: string
 ): Promise<{ updatedCount: number; deductedCount: number }> => {
+  // Try server REST API call first
+  try {
+    const res = await fetch(`${API_URL}/api/inventory/save-system-report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ factoryId, reportType, updatedParts, username: performerUsername, reportDate })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      console.log(`[DB API] Saved system report via Express API.`);
+      return { updatedCount: data.updatedCount, deductedCount: data.deductedCount };
+    }
+  } catch (err: any) {
+    console.warn(`[DB API] Save system report API failed: ${err.message}. Falling back to Firestore directly.`);
+  }
+
   const BATCH_SIZE = 450;
   let updatedCount = 0;
   let deductedCount = 0;
@@ -1093,8 +1126,6 @@ export const revertUpload = async (historyId: string, performerUsername: string)
     `Reverted upload ${historyId} (${record.fileName}) for factory ${record.factoryId}`
   );
 };
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
 export const softDeleteSparePart = async (partId: string, performerUsername: string): Promise<void> => {
   // Try server REST API call first
