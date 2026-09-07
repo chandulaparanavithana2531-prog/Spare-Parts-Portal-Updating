@@ -2128,22 +2128,55 @@ Ensure the Excel format is correct and you have a stable internet connection.
 
                       {/* SAP / Oracle Inventory Sync Banner — Admin Only */}
                       {currentUser.role === 'admin' && (
-                        <div className="bg-gradient-to-r from-indigo-50/60 to-violet-50/60 border border-indigo-100/80 rounded-[2rem] p-6 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                        <div
+                          style={{
+                            background: darkMode
+                              ? 'linear-gradient(135deg, rgba(79,70,229,0.18) 0%, rgba(109,40,217,0.15) 100%)'
+                              : 'linear-gradient(135deg, rgba(238,242,255,0.8) 0%, rgba(245,243,255,0.8) 100%)',
+                            border: darkMode ? '1px solid rgba(99,102,241,0.35)' : '1px solid rgba(199,210,254,0.8)',
+                          }}
+                          className="rounded-[2rem] p-6 flex flex-col md:flex-row md:items-center justify-between gap-6"
+                        >
                           <div className="flex gap-4">
-                            <div className="w-12 h-12 rounded-full bg-indigo-600 flex items-center justify-center text-white shrink-0 shadow-lg shadow-indigo-200">
+                            <div
+                              className="w-12 h-12 rounded-full flex items-center justify-center text-white shrink-0 shadow-lg"
+                              style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', boxShadow: '0 8px 24px rgba(99,102,241,0.35)' }}
+                            >
                               <FileSpreadsheet className="w-6 h-6" />
                             </div>
                             <div>
-                              <h3 className="font-bold text-gray-900 text-[15px]">SAP &amp; Oracle Inventory Sync</h3>
-                              <p className="text-xs text-gray-500 mt-1">
+                              <h3
+                                className="font-bold text-[15px]"
+                                style={{ color: darkMode ? '#e0e7ff' : '#1e1b4b' }}
+                              >
+                                SAP &amp; Oracle Inventory Sync
+                              </h3>
+                              <p
+                                className="text-xs mt-1"
+                                style={{ color: darkMode ? '#a5b4fc' : '#6b7280' }}
+                              >
                                 Upload a raw SAP &quot;Current Inventory Status&quot; or Oracle &quot;GS Month Year&quot; export.
                                 Format is auto-detected — existing items update, new items are inserted, no duplicates created.
                               </p>
                               <div className="flex items-center gap-2 mt-2">
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 border border-blue-200">
+                                <span
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold"
+                                  style={{
+                                    background: darkMode ? 'rgba(59,130,246,0.2)' : '#eff6ff',
+                                    color: darkMode ? '#93c5fd' : '#1d4ed8',
+                                    border: darkMode ? '1px solid rgba(59,130,246,0.4)' : '1px solid #bfdbfe',
+                                  }}
+                                >
                                   <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> SAP ERP
                                 </span>
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">
+                                <span
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold"
+                                  style={{
+                                    background: darkMode ? 'rgba(16,185,129,0.2)' : '#ecfdf5',
+                                    color: darkMode ? '#6ee7b7' : '#065f46',
+                                    border: darkMode ? '1px solid rgba(16,185,129,0.4)' : '1px solid #a7f3d0',
+                                  }}
+                                >
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Oracle ERP
                                 </span>
                               </div>
@@ -2152,7 +2185,11 @@ Ensure the Excel format is correct and you have a stable internet connection.
                           <button
                             id="btn-inventory-sync-modal"
                             onClick={() => setShowInventorySyncModal(true)}
-                            className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-indigo-100 hover:shadow-xl hover:shadow-indigo-200 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300 flex items-center gap-2 cursor-pointer shrink-0"
+                            className="flex items-center gap-2 px-6 py-3 text-white text-xs font-black uppercase tracking-widest rounded-2xl transition-all duration-300 cursor-pointer shrink-0 hover:-translate-y-0.5 active:translate-y-0"
+                            style={{
+                              background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                              boxShadow: '0 4px 18px rgba(99,102,241,0.45)',
+                            }}
                           >
                             <Upload className="w-4 h-4" />
                             Sync Inventory (SAP / Oracle)

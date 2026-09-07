@@ -131,7 +131,12 @@ let memoryHistoricalRecords = [
 
 // Configure Multer for in-memory file handling
 const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50 MB — supports 15,000+ row Excel exports
+  },
+});
 
 // Factory Mapping Function
 function resolveFactoryName(rawName) {
