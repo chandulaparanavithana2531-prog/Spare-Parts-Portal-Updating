@@ -1,5 +1,7 @@
 import { SparePart, HistoricalConsumptionRecord } from '../types';
-import { getHistoricalConsumption } from './db';
+import { getHistoricalConsumption, saveInventory } from './db';
+import { logAction } from './audit';
+import { parseInventoryFile } from './inventorySyncService';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
@@ -460,27 +462,112 @@ export async function uploadInventorySync(
   formData.append('plantId', plantId);
   formData.append('username', username);
 
-  let response: Response;
+  // 1. Attempt to sync via server REST API endpoint routes
+  const targetUrls = [
+    `${API_URL}/api/inventory/sync-upload`,
+    `http://localhost:3000/api/inventory/sync-upload`,
+    `/api/inventory/sync-upload`
+  ];
+
+  for (const url of targetUrls) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (response.ok) {
+        const data = await response.json().catch(() => null);
+        if (data && (data.status === 'success' || data.items_updated !== undefined)) {
+          console.log(`[API] Inventory sync upload succeeded via ${url}`);
+          return data as IngestionSummary;
+        }
+      }
+    } catch (e) {
+      // Continue to next endpoint or fall back
+    }
+  }
+
+  // 2. Client-side fallback: Ingest & parse Excel directly in browser/node
+  console.log(`[API Fallback] Server sync endpoint unavailable or returned static route response. Performing client-side Excel ingestion...`);
   try {
-    response = await fetch(`${API_URL}/api/inventory/sync-upload`, {
-      method: 'POST',
-      body: formData,
-    });
-  } catch (networkErr: any) {
-    throw new Error(`Network error — could not reach the server: ${networkErr.message}`);
-  }
+    const parseRes = await parseInventoryFile(file, plantId);
+    
+    if (!parseRes.rows || parseRes.rows.length === 0) {
+      throw new Error("No valid data rows could be extracted from the uploaded file.");
+    }
 
-  let data: any;
-  try {
-    data = await response.json();
-  } catch {
-    const text = await response.text().catch(() => '');
-    throw new Error(`Server returned an unexpected response (HTTP ${response.status}): ${text}`);
-  }
+    const now = Date.now();
+    const partsToSave: SparePart[] = [];
+    let itemsUpdated = 0;
+    let newItemsAdded = 0;
 
-  if (!response.ok) {
-    throw new Error(data?.message || `Upload failed with HTTP ${response.status}`);
-  }
+    // Load existing items from localStorage for update/add counts
+    let existingList: SparePart[] = [];
+    try {
+      const existingStr = localStorage.getItem('spareshare_inventory');
+      existingList = existingStr ? JSON.parse(existingStr) : [];
+    } catch {
+      existingList = [];
+    }
+    const existingIds = new Set(existingList.map(p => p.id));
 
-  return data as IngestionSummary;
+    for (const row of parseRes.rows) {
+      const safeId = `${row.plant_id}-${row.item_code}`.replace(/[^a-zA-Z0-9\-_.]/g, '-');
+      
+      if (existingIds.has(safeId)) {
+        itemsUpdated++;
+      } else {
+        newItemsAdded++;
+      }
+
+      const sparePart: SparePart = {
+        id: safeId,
+        factoryId: row.plant_id,
+        materialNumber: row.item_code,
+        partNumber: row.item_code,
+        description: row.description,
+        categoryName: row.category || '-',
+        onHand: row.quantity_on_hand,
+        unitCost: row.unit_cost || 0,
+        totalValue: row.total_value || ((row.unit_cost || 0) * row.quantity_on_hand),
+        spareType: row.category || 'General',
+        machine: '-',
+        criticality: '-',
+        qtyMoreThan3Years: 0,
+        valueMoreThan3Years: 0,
+        lastStockUpdateDate: new Date(now).toISOString().split('T')[0],
+        lastStockUpdateUser: username,
+        ...(row.legacy_item_code ? { legacyItemCode: row.legacy_item_code } : {})
+      };
+
+      partsToSave.push(sparePart);
+    }
+
+    // Save to local storage, Firestore, and Express db.json
+    await saveInventory(partsToSave, username);
+
+    // Log upload action in audit log
+    await logAction(
+      username,
+      'UPLOAD',
+      'inventory',
+      parseRes.plantId || plantId,
+      `Synced ${parseRes.rows.length} items from ${file.name} for ${parseRes.plantId || plantId}`,
+      { userName: username, plantId: parseRes.plantId || plantId, plantName: parseRes.plantId || plantId }
+    );
+
+    return {
+      status: 'success',
+      source: parseRes.format as 'SAP' | 'ORACLE' | 'UNKNOWN',
+      plant: parseRes.plantId || plantId,
+      total_rows_read: parseRes.totalRowsRead,
+      items_updated: itemsUpdated,
+      new_items_added: newItemsAdded,
+      skipped_rows: parseRes.skipped,
+      message: `Successfully synced ${parseRes.rows.length} items for ${parseRes.plantId || plantId} (${newItemsAdded} new added, ${itemsUpdated} updated, ${parseRes.skipped} skipped).`
+    };
+  } catch (clientErr: any) {
+    throw new Error(`Sync upload failed: ${clientErr.message || String(clientErr)}`);
+  }
 }
