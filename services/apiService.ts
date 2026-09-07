@@ -425,3 +425,62 @@ export async function notifyOrderCreated(eventData: {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Inventory Sync Upload — SAP & Oracle auto-detect endpoint
+// ---------------------------------------------------------------------------
+
+export interface IngestionSummary {
+  status: 'success' | 'error';
+  source: 'SAP' | 'ORACLE' | 'UNKNOWN';
+  plant: string;
+  total_rows_read: number;
+  items_updated: number;
+  new_items_added: number;
+  skipped_rows: number;
+  message?: string;
+}
+
+/**
+ * Uploads an SAP or Oracle inventory Excel file to the backend sync endpoint.
+ * The server auto-detects the format, normalises rows to the canonical schema,
+ * and performs a transactional batch upsert (insert new + update existing).
+ *
+ * @param file     - The .xlsx / .xls file selected by the user
+ * @param plantId  - Target plant / factory ID (e.g. "Lanka Tiles")
+ * @param username - Performer username for audit logging
+ * @returns IngestionSummary with counts of added / updated / skipped rows
+ */
+export async function uploadInventorySync(
+  file: File,
+  plantId: string,
+  username: string
+): Promise<IngestionSummary> {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('plantId', plantId);
+  formData.append('username', username);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}/api/inventory/sync-upload`, {
+      method: 'POST',
+      body: formData,
+    });
+  } catch (networkErr: any) {
+    throw new Error(`Network error — could not reach the server: ${networkErr.message}`);
+  }
+
+  let data: any;
+  try {
+    data = await response.json();
+  } catch {
+    const text = await response.text().catch(() => '');
+    throw new Error(`Server returned an unexpected response (HTTP ${response.status}): ${text}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(data?.message || `Upload failed with HTTP ${response.status}`);
+  }
+
+  return data as IngestionSummary;
+}

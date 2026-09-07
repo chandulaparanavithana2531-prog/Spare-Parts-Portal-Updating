@@ -1216,6 +1216,445 @@ app.post(['/api/inventory/save-system-report'], async (req, res) => {
   }
 });
 
+// =============================================================================
+// POST /api/inventory/sync-upload
+// SAP & Oracle automated inventory synchronisation endpoint.
+//
+// Accepts multipart/form-data with:
+//   file     — .xlsx / .xls binary
+//   plantId  — target plant / factory ID string
+//   username — performer username for audit logging
+//
+// Returns IngestionSummary:
+//   { status, source, plant, total_rows_read, items_updated, new_items_added, skipped_rows }
+// =============================================================================
+
+/**
+ * Detect SAP vs Oracle from workbook.
+ * Returns 'SAP', 'ORACLE', or 'UNKNOWN'.
+ */
+function detectInventoryFormat(workbook) {
+  const sheetNames = workbook.SheetNames;
+
+  // SAP: sheet name includes "Current Inventory Status"
+  if (sheetNames.some(n => n.replace(/\s+/g, ' ').trim().toLowerCase().includes('current inventory status'))) {
+    return 'SAP';
+  }
+  // Oracle: sheet name matches /^GS /i (e.g. "GS June 2026")
+  if (sheetNames.some(n => /^gs\s/i.test(n.trim()))) {
+    return 'ORACLE';
+  }
+
+  // Header-based fallback on first sheet
+  const sheet = workbook.Sheets[sheetNames[0]];
+  if (!sheet) return 'UNKNOWN';
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+  for (let i = 0; i < Math.min(10, rawRows.length); i++) {
+    const rowStr = rawRows[i].map(c => String(c ?? '').toLowerCase()).join('|');
+    if (rowStr.includes('sum of unrestricted')) return 'SAP';
+    if (rowStr.includes('organization') && rowStr.includes('item code')) return 'ORACLE';
+  }
+  return 'UNKNOWN';
+}
+
+function normalizeUOMServer(raw) {
+  if (!raw) return 'EACH';
+  const s = String(raw).trim().toUpperCase();
+  const MAP = {
+    EA: 'EACH', EACH: 'EACH', PC: 'PIECE', PCS: 'PIECE', PIECE: 'PIECE',
+    KG: 'KG', KGS: 'KG', LT: 'LITRE', LTR: 'LITRE', LITRE: 'LITRE', LITER: 'LITRE',
+    M: 'METRE', MTR: 'METRE', METRE: 'METRE', METER: 'METRE',
+    NOS: 'NOS', NO: 'NOS', SET: 'SET', SETS: 'SET',
+    BOX: 'BOX', PK: 'PACK', PACK: 'PACK', ROLL: 'ROLL', ROL: 'ROLL',
+    FT: 'FEET', IN: 'INCH', L: 'LITRE',
+  };
+  return MAP[s] ?? s;
+}
+
+function toFloatServer(val) {
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  const cleaned = String(val).replace(/[^0-9.\-]/g, '');
+  const parsed = parseFloat(cleaned);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+function stripLeadingZerosServer(s) {
+  if (/^\d+$/.test(s)) return String(parseInt(s, 10));
+  return s;
+}
+
+function findColIdxServer(headers, ...candidates) {
+  const lowers = candidates.map(c => c.toLowerCase().trim());
+  return headers.findIndex(h => {
+    const hs = String(h ?? '').toLowerCase().trim();
+    return lowers.includes(hs);
+  });
+}
+
+/**
+ * Parse SAP " Current Inventory Status " sheet.
+ * Header at row index 2 (0-based). Columns B–F mapped positionally / by name.
+ */
+function parseSAPInventoryServer(workbook, plantId) {
+  const sheetName =
+    workbook.SheetNames.find(n => n.replace(/\s+/g, ' ').trim().toLowerCase().includes('current inventory status'))
+    ?? workbook.SheetNames[0];
+
+  const sheet = workbook.Sheets[sheetName];
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: true });
+
+  // Locate header row
+  let headerIdx = 2;
+  for (let i = 0; i < Math.min(10, rawRows.length); i++) {
+    const rowStr = rawRows[i].map(c => String(c ?? '').toLowerCase()).join('|');
+    if (rowStr.includes('material number') || rowStr.includes('sum of unrestricted')) {
+      headerIdx = i;
+      break;
+    }
+  }
+
+  const headers = rawRows[headerIdx] ?? [];
+  const matNumIdx = findColIdxServer(headers, 'Material Number', 'Material No', 'Material') !== -1
+    ? findColIdxServer(headers, 'Material Number', 'Material No', 'Material') : 1;
+  const oldMatIdx = findColIdxServer(headers, 'Old material number', 'Old Material', 'Old Mat No') !== -1
+    ? findColIdxServer(headers, 'Old material number', 'Old Material', 'Old Mat No') : 2;
+  const descIdx   = findColIdxServer(headers, 'Material Description', 'Description') !== -1
+    ? findColIdxServer(headers, 'Material Description', 'Description') : 3;
+  const uomIdx    = findColIdxServer(headers, 'Base Unit of Measure', 'UoM', 'Unit of Measure', 'UOM') !== -1
+    ? findColIdxServer(headers, 'Base Unit of Measure', 'UoM', 'Unit of Measure', 'UOM') : 4;
+  const qtyIdx    = findColIdxServer(headers, 'Sum of Unrestricted', 'Unrestricted', 'Stock Qty', 'Quantity') !== -1
+    ? findColIdxServer(headers, 'Sum of Unrestricted', 'Unrestricted', 'Stock Qty', 'Quantity') : 5;
+
+  const now = Date.now();
+  const rows = [];
+  let skipped = 0;
+
+  for (let i = headerIdx + 1; i < rawRows.length; i++) {
+    const row = rawRows[i];
+    if (!row || row.length === 0) { skipped++; continue; }
+
+    const rawMatNum = String(row[matNumIdx] ?? '').trim();
+    if (!rawMatNum || rawMatNum.toLowerCase() === 'total' || rawMatNum.toLowerCase() === 'grand total') {
+      skipped++;
+      continue;
+    }
+
+    const itemCode = stripLeadingZerosServer(rawMatNum);
+    rows.push({
+      plant_id: plantId,
+      item_code: itemCode,
+      legacy_item_code: String(row[oldMatIdx] ?? '').trim() || null,
+      description: String(row[descIdx] ?? '').trim() || 'No Description',
+      category: null,
+      quantity_on_hand: toFloatServer(row[qtyIdx]),
+      uom: normalizeUOMServer(String(row[uomIdx] ?? '')),
+      unit_cost: null,
+      total_value: null,
+      source_system: 'SAP',
+      last_synced_at: now,
+    });
+  }
+
+  return { rows, skipped };
+}
+
+/**
+ * Parse Oracle "GS ..." inventory sheet.
+ * Header at row index 2 (0-based).
+ */
+function parseOracleInventoryServer(workbook, plantId) {
+  const sheetName =
+    workbook.SheetNames.find(n => /^gs\s/i.test(n.trim()))
+    ?? workbook.SheetNames[0];
+
+  const sheet = workbook.Sheets[sheetName];
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: true });
+
+  let headerIdx = 2;
+  for (let i = 0; i < Math.min(10, rawRows.length); i++) {
+    const rowStr = rawRows[i].map(c => String(c ?? '').toLowerCase()).join('|');
+    if (rowStr.includes('item code') && rowStr.includes('description')) {
+      headerIdx = i;
+      break;
+    }
+  }
+
+  const headers = rawRows[headerIdx] ?? [];
+  const colOrg      = findColIdxServer(headers, 'Organization', 'Org', 'Plant');
+  const colCat      = findColIdxServer(headers, 'Item Category', 'Category');
+  const colItemCode = findColIdxServer(headers, 'Item Code', 'ItemCode', 'Item');
+  const colDesc     = findColIdxServer(headers, 'Description', 'Item Description');
+  const colUOM      = findColIdxServer(headers, 'Primary Unit Of Measure', 'UOM', 'Unit of Measure', 'UoM');
+  const colQty      = findColIdxServer(headers, 'Quantity', 'On Hand Quantity', 'Qty');
+  const colCost     = findColIdxServer(headers, 'Unit Cost', 'Unit Price', 'Cost');
+  const colValue    = findColIdxServer(headers, 'Inventory Value', 'Total Value', 'Value');
+
+  const now = Date.now();
+  const rows = [];
+  let skipped = 0;
+
+  for (let i = headerIdx + 1; i < rawRows.length; i++) {
+    const row = rawRows[i];
+    if (!row || row.length === 0) { skipped++; continue; }
+
+    const rawItemCode = String(row[colItemCode] ?? '').trim();
+    if (!rawItemCode || rawItemCode === '' || rawItemCode.toLowerCase() === 'nan' || rawItemCode.toLowerCase().includes('total')) {
+      skipped++;
+      continue;
+    }
+
+    const orgRaw       = colOrg !== -1 ? String(row[colOrg] ?? '').trim() : '';
+    const resolvedPlant = orgRaw || plantId;
+    const unitCostRaw  = colCost  !== -1 ? toFloatServer(row[colCost])  : null;
+    const totalValRaw  = colValue !== -1 ? toFloatServer(row[colValue]) : null;
+
+    rows.push({
+      plant_id:        resolvedPlant,
+      item_code:       rawItemCode,
+      description:     colDesc !== -1 ? (String(row[colDesc] ?? '').trim() || 'No Description') : 'No Description',
+      category:        colCat  !== -1 ? (String(row[colCat]  ?? '').trim() || null) : null,
+      quantity_on_hand: toFloatServer(colQty !== -1 ? row[colQty] : 0),
+      uom:             normalizeUOMServer(colUOM !== -1 ? String(row[colUOM] ?? '') : ''),
+      unit_cost:       (unitCostRaw !== null && unitCostRaw > 0) ? unitCostRaw : null,
+      total_value:     (totalValRaw !== null && totalValRaw > 0) ? totalValRaw : null,
+      source_system:   'ORACLE',
+      last_synced_at:  now,
+    });
+  }
+
+  return { rows, skipped };
+}
+
+/**
+ * Maps a CanonicalInventoryRow → existing SparePart document shape
+ * so all writes land in the standard inventory collection/db.json.
+ */
+function canonicalToSparePart(row, performerUsername, now) {
+  // Build composite ID identical to existing pattern
+  const safeId = `${row.plant_id}-${row.item_code}`.replace(/[^a-zA-Z0-9\-_.]/g, '-');
+  return {
+    id:             safeId,
+    factoryId:      row.plant_id,
+    materialNumber: row.item_code,
+    partNumber:     row.item_code,
+    description:    row.description,
+    categoryName:   row.category ?? '-',
+    onHand:         row.quantity_on_hand,
+    unitCost:       row.unit_cost ?? 0,
+    totalValue:     row.total_value ?? ((row.unit_cost ?? 0) * row.quantity_on_hand),
+    uom:            row.uom,
+    source_system:  row.source_system,
+    spareType:      row.category ?? 'General',
+    machine:        '-',
+    criticality:    '-',
+    qtyMoreThan3Years:   0,
+    valueMoreThan3Years: 0,
+    lastStockUpdateDate: new Date(now).toISOString().split('T')[0],
+    lastStockUpdateUser: performerUsername,
+    last_synced_at:      now,
+    ...(row.legacy_item_code ? { legacyItemCode: row.legacy_item_code } : {}),
+  };
+}
+
+app.post(['/api/inventory/sync-upload'], upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ status: 'error', message: 'No file uploaded.' });
+  }
+
+  const plantId          = (req.body.plantId || '').trim();
+  const performerUsername = (req.body.username || 'unknown').trim();
+
+  if (!plantId) {
+    return res.status(400).json({ status: 'error', message: 'plantId is required.' });
+  }
+
+  try {
+    // ----- 1. Parse workbook -----
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const format   = detectInventoryFormat(workbook);
+
+    if (format === 'UNKNOWN') {
+      return res.status(422).json({
+        status: 'error',
+        message: 'Unrecognised file format. Expected an SAP "Current Inventory Status" or Oracle "GS ..." inventory export.',
+      });
+    }
+
+    let parsedRows = [];
+    let skippedRows = 0;
+
+    if (format === 'SAP') {
+      const result = parseSAPInventoryServer(workbook, plantId);
+      parsedRows   = result.rows;
+      skippedRows  = result.skipped;
+    } else {
+      const result = parseOracleInventoryServer(workbook, plantId);
+      parsedRows   = result.rows;
+      skippedRows  = result.skipped;
+    }
+
+    if (parsedRows.length === 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'No valid data rows could be extracted from the uploaded file.',
+        skipped_rows: skippedRows,
+      });
+    }
+
+    // ----- 2. Load existing db.json -----
+    const dbJsonPath = path.join(process.cwd(), 'db.json');
+    let localData = [];
+    if (fs.existsSync(dbJsonPath)) {
+      try {
+        localData = JSON.parse(fs.readFileSync(dbJsonPath, 'utf8'));
+        if (!Array.isArray(localData)) localData = [];
+      } catch (err) {
+        console.warn('[Sync Upload] Failed to read db.json:', err.message);
+        localData = [];
+      }
+    }
+
+    // Build lookup map: id → index in localData
+    const idIndexMap = new Map();
+    localData.forEach((p, idx) => {
+      if (p.id) idIndexMap.set(p.id, idx);
+    });
+
+    // ----- 3. Transactional upsert -----
+    const now = Date.now();
+    let itemsUpdated  = 0;
+    let newItemsAdded = 0;
+    const previousState = {};
+    const updatedState  = {};
+    const firestoreOps  = []; // collect docs for Firestore batch
+
+    for (const row of parsedRows) {
+      const sparePart = canonicalToSparePart(row, performerUsername, now);
+      const partId    = sparePart.id;
+
+      if (idIndexMap.has(partId)) {
+        // UPDATE — merge into existing record, preserve fields not in the export
+        const existingIdx  = idIndexMap.get(partId);
+        const existingData = localData[existingIdx];
+
+        previousState[partId] = {
+          onHand:     existingData.onHand ?? 0,
+          totalValue: existingData.totalValue ?? 0,
+        };
+
+        const merged = {
+          ...existingData,
+          // Fields to overwrite from the export
+          onHand:             sparePart.onHand,
+          description:        sparePart.description,
+          uom:                sparePart.uom,
+          unitCost:           sparePart.unitCost > 0 ? sparePart.unitCost : (existingData.unitCost ?? 0),
+          totalValue:         sparePart.unitCost > 0
+                                ? sparePart.totalValue
+                                : (existingData.unitCost ?? 0) * sparePart.onHand,
+          categoryName:       sparePart.categoryName !== '-' ? sparePart.categoryName : (existingData.categoryName ?? '-'),
+          source_system:      sparePart.source_system,
+          lastStockUpdateDate: sparePart.lastStockUpdateDate,
+          lastStockUpdateUser: performerUsername,
+          last_synced_at:     now,
+          ...(sparePart.legacyItemCode ? { legacyItemCode: sparePart.legacyItemCode } : {}),
+        };
+
+        updatedState[partId] = { onHand: merged.onHand, totalValue: merged.totalValue };
+        localData[existingIdx] = merged;
+        firestoreOps.push(merged);
+        itemsUpdated++;
+      } else {
+        // INSERT — new catalog item
+        previousState[partId] = { isNew: true };
+        updatedState[partId]  = { onHand: sparePart.onHand, totalValue: sparePart.totalValue };
+        localData.push(sparePart);
+        firestoreOps.push(sparePart);
+        idIndexMap.set(partId, localData.length - 1);
+        newItemsAdded++;
+      }
+    }
+
+    // ----- 4. Persist db.json (single atomic write) -----
+    fs.writeFileSync(dbJsonPath, JSON.stringify(localData, null, 2), 'utf8');
+    console.log(`[Sync Upload] db.json updated — updated: ${itemsUpdated}, added: ${newItemsAdded}, skipped: ${skippedRows}`);
+
+    // ----- 5. Firestore batch sync -----
+    if (firestoreDb && firestoreOps.length > 0) {
+      try {
+        const BATCH_SIZE = 400;
+        for (let i = 0; i < firestoreOps.length; i += BATCH_SIZE) {
+          const chunk = firestoreOps.slice(i, i + BATCH_SIZE);
+          const batch = firestoreDb.batch();
+          chunk.forEach(part => {
+            const ref = firestoreDb.collection('inventory').doc(part.id);
+            batch.set(ref, part, { merge: true });
+          });
+          await batch.commit();
+        }
+        console.log(`[Sync Upload] Firestore synced — ${firestoreOps.length} docs written.`);
+      } catch (fsErr) {
+        console.warn('[Sync Upload] Firestore write failed (non-fatal):', fsErr.message);
+      }
+    }
+
+    // ----- 6. Audit trail -----
+    const auditDetails = `[${format}] Inventory sync for ${plantId}: ${newItemsAdded} added, ${itemsUpdated} updated, ${skippedRows} skipped`;
+    if (firestoreDb) {
+      try {
+        const logRef = firestoreDb.collection('audit_logs').doc();
+        await logRef.set({
+          user_id:     performerUsername,
+          user_name:   performerUsername,
+          plant_id:    plantId,
+          plant_name:  plantId,
+          action:      'UPLOAD',
+          entity_type: 'inventory',
+          entity_id:   plantId,
+          changes:     JSON.stringify({ source: format, added: newItemsAdded, updated: itemsUpdated }),
+          created_at:  now,
+          details:     auditDetails,
+        });
+
+        // Upload history record
+        const historyId  = `sync-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        const historyRef = firestoreDb.collection('upload_history').doc(historyId);
+        await historyRef.set({
+          id:            historyId,
+          timestamp:     now,
+          uploadedBy:    performerUsername,
+          fileName:      req.file.originalname,
+          factoryId:     plantId,
+          reportType:    `${format}_INVENTORY_SYNC`,
+          previousState: JSON.stringify(previousState),
+          updatedState:  JSON.stringify(updatedState),
+        });
+      } catch (auditErr) {
+        console.warn('[Sync Upload] Audit logging failed (non-fatal):', auditErr.message);
+      }
+    }
+
+    // ----- 7. Return ingestion summary -----
+    const summary = {
+      status:         'success',
+      source:         format,
+      plant:          plantId,
+      total_rows_read: parsedRows.length + skippedRows,
+      items_updated:  itemsUpdated,
+      new_items_added: newItemsAdded,
+      skipped_rows:   skippedRows,
+    };
+
+    console.log('[Sync Upload] Complete:', JSON.stringify(summary));
+    return res.json(summary);
+
+  } catch (err) {
+    console.error('[Sync Upload] Critical error:', err);
+    return res.status(500).json({ status: 'error', message: `Internal server error: ${err.message}` });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`[Server] Spare Parts Backend running on port ${PORT}`);
 });

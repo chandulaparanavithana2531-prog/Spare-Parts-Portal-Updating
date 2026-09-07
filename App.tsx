@@ -19,6 +19,8 @@ import { Users } from 'lucide-react';
 import { AuditLogs } from './components/AuditLogs';
 import { UploadPreviewModal } from './components/UploadPreviewModal';
 import { ExcelParseResult } from './services/excelService';
+import { InventorySyncModal } from './components/InventorySyncModal';
+
 
 // Tab Display Names Mapping
 const tabDisplayNames: Record<string, string> = {
@@ -554,6 +556,7 @@ function App() {
   const [showAI, setShowAI] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
+  const [showInventorySyncModal, setShowInventorySyncModal] = useState(false);
   const [loadingDB, setLoadingDB] = useState(false);
   const [isSyncingSheets, setIsSyncingSheets] = useState(false);
   
@@ -652,6 +655,23 @@ function App() {
       }
     }
   }, [currentUser, selectedReportFactory]);
+
+  // Automatically determine ERP system vendor based on selected target factory
+  useEffect(() => {
+    if (selectedReportFactory) {
+      if (selectedReportFactory.includes('Lanka')) {
+        setSelectedSystem('SAP');
+        if (selectedReportType !== 'MB52' && selectedReportType !== 'MB51') {
+          setSelectedReportType('MB52');
+        }
+      } else if (selectedReportFactory.includes('Rocell')) {
+        setSelectedSystem('Oracle');
+        if (selectedReportType !== 'SUBINVENTORY' && selectedReportType !== 'TRANSACTION') {
+          setSelectedReportType('SUBINVENTORY');
+        }
+      }
+    }
+  }, [selectedReportFactory, selectedReportType]);
 
   const handleRevertUpload = async (historyId: string) => {
     if (!currentUser || currentUser.role !== 'admin') return;
@@ -1776,25 +1796,10 @@ Ensure the Excel format is correct and you have a stable internet connection.
                   {/* System Selection */}
                   <div className="space-y-2">
                     <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">ERP System Vendor</label>
-                    <div className="flex bg-gray-50 p-1.5 rounded-xl border border-gray-200">
-                      <button
-                        type="button"
-                        onClick={() => { setSelectedSystem('SAP'); setSelectedReportType('MB52'); setReportFeedback(null); }}
-                        className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-                          selectedSystem === 'SAP' ? 'bg-white text-blue-600 shadow' : 'text-gray-500 hover:text-gray-700'
-                        }`}
-                      >
-                        SAP ERP
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setSelectedSystem('Oracle'); setSelectedReportType('SUBINVENTORY'); setReportFeedback(null); }}
-                        className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-                          selectedSystem === 'Oracle' ? 'bg-white text-blue-600 shadow' : 'text-gray-500 hover:text-gray-700'
-                        }`}
-                      >
-                        Oracle ERP
-                      </button>
+                    <div className="flex bg-gray-100/50 p-1.5 rounded-xl border border-gray-200/50">
+                      <div className="w-full text-center py-2 text-xs font-black uppercase tracking-wider text-blue-600 bg-white rounded-lg shadow-sm">
+                        {selectedSystem} ERP (Auto-Selected)
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2121,6 +2126,40 @@ Ensure the Excel format is correct and you have a stable internet connection.
                         </div>
                       )}
 
+                      {/* SAP / Oracle Inventory Sync Banner — Admin Only */}
+                      {currentUser.role === 'admin' && (
+                        <div className="bg-gradient-to-r from-indigo-50/60 to-violet-50/60 border border-indigo-100/80 rounded-[2rem] p-6 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                          <div className="flex gap-4">
+                            <div className="w-12 h-12 rounded-full bg-indigo-600 flex items-center justify-center text-white shrink-0 shadow-lg shadow-indigo-200">
+                              <FileSpreadsheet className="w-6 h-6" />
+                            </div>
+                            <div>
+                              <h3 className="font-bold text-gray-900 text-[15px]">SAP &amp; Oracle Inventory Sync</h3>
+                              <p className="text-xs text-gray-500 mt-1">
+                                Upload a raw SAP &quot;Current Inventory Status&quot; or Oracle &quot;GS Month Year&quot; export.
+                                Format is auto-detected — existing items update, new items are inserted, no duplicates created.
+                              </p>
+                              <div className="flex items-center gap-2 mt-2">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 border border-blue-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> SAP ERP
+                                </span>
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Oracle ERP
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            id="btn-inventory-sync-modal"
+                            onClick={() => setShowInventorySyncModal(true)}
+                            className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-indigo-100 hover:shadow-xl hover:shadow-indigo-200 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300 flex items-center gap-2 cursor-pointer shrink-0"
+                          >
+                            <Upload className="w-4 h-4" />
+                            Sync Inventory (SAP / Oracle)
+                          </button>
+                        </div>
+                      )}
+
                       {/* Inner Sub-Tabs Segmented Control - Admin Only */}
                       {currentUser.role === 'admin' && (
                         <div className="flex p-1 bg-gray-100/60 rounded-xl border border-gray-200/50 max-w-2xl">
@@ -2164,25 +2203,10 @@ Ensure the Excel format is correct and you have a stable internet connection.
                             {/* System Selection */}
                             <div className="space-y-2">
                               <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">ERP System Vendor</label>
-                              <div className="flex bg-gray-50 p-1.5 rounded-xl border border-gray-200">
-                                <button
-                                  type="button"
-                                  onClick={() => { setSelectedSystem('SAP'); setSelectedReportType('MB52'); setReportFeedback(null); }}
-                                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-                                    selectedSystem === 'SAP' ? 'bg-white text-blue-600 shadow' : 'text-gray-500 hover:text-gray-700'
-                                  }`}
-                                >
-                                  SAP ERP
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => { setSelectedSystem('Oracle'); setSelectedReportType('SUBINVENTORY'); setReportFeedback(null); }}
-                                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-                                    selectedSystem === 'Oracle' ? 'bg-white text-blue-600 shadow' : 'text-gray-500 hover:text-gray-700'
-                                  }`}
-                                >
-                                  Oracle ERP
-                                </button>
+                              <div className="flex bg-gray-100/50 p-1.5 rounded-xl border border-gray-200/50">
+                                <div className="w-full text-center py-2 text-xs font-black uppercase tracking-wider text-blue-600 bg-white rounded-lg shadow-sm">
+                                  {selectedSystem} ERP (Auto-Selected)
+                                </div>
                               </div>
                             </div>
 
@@ -2392,6 +2416,15 @@ Ensure the Excel format is correct and you have a stable internet connection.
           isUploading={isConfirmingUpload}
         />
       )}
+
+      {/* SAP / Oracle Inventory Sync Modal */}
+      <InventorySyncModal
+        isOpen={showInventorySyncModal}
+        onClose={() => setShowInventorySyncModal(false)}
+        onSyncComplete={refreshData}
+        currentUsername={currentUser.username}
+        plants={factories.map(f => ({ id: f.id, name: f.name }))}
+      />
 
       {/* Global CSS Overrides for Dark Mode */}
       <style>{`
