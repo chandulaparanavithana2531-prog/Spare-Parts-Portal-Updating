@@ -1092,7 +1092,44 @@ export const getUploadHistory = async (): Promise<UploadHistoryRecord[]> => {
   }
 };
 
-export const revertUpload = async (historyId: string, performerUsername: string): Promise<void> => {
+export const revertUpload = async (historyId: string, performerUser: User | string): Promise<void> => {
+  const username = typeof performerUser === 'string' ? performerUser : performerUser.username;
+  const role = typeof performerUser === 'object' ? performerUser.role : (username === 'admin' ? 'admin' : 'user');
+
+  if (role !== 'admin' && username !== 'admin' && username !== 'admin@spareshare.com') {
+    throw new Error("Unauthorized: Only system administrators can revert inventory history.");
+  }
+
+  // Try server REST API call first
+  try {
+    const res = await fetch(`${API_URL}/api/history/revert`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-role': role,
+        'x-user-name': username,
+        'x-user-email': username.includes('@') ? username : (username === 'admin' ? 'admin@spareshare.com' : 'user@spareshare.com')
+      },
+      body: JSON.stringify({ historyId, batchId: historyId, username, role })
+    });
+
+    if (res.status === 403) {
+      const errData = await res.json();
+      throw new Error(errData.error || "Unauthorized: Only system administrators can revert inventory history.");
+    }
+
+    if (res.ok) {
+      console.log(`[DB API] Reverted upload ${historyId} via Express API.`);
+      return;
+    }
+  } catch (err: any) {
+    if (err.message && err.message.includes("Unauthorized")) {
+      throw err;
+    }
+    console.warn(`[DB API] Revert API call failed: ${err.message}. Falling back to Firestore directly.`);
+  }
+
+  // Fallback to direct Firestore write
   const historyRef = doc(db, 'upload_history', historyId);
   const historySnap = await getDoc(historyRef);
   if (!historySnap.exists()) {
@@ -1101,8 +1138,10 @@ export const revertUpload = async (historyId: string, performerUsername: string)
   const record = historySnap.data() as UploadHistoryRecord;
   const batch = writeBatch(db);
 
+  const previousState = typeof record.previousState === 'string' ? JSON.parse(record.previousState) : record.previousState;
+
   // Revert each part in previousState
-  Object.entries(record.previousState).forEach(([partId, prevState]) => {
+  Object.entries(previousState || {}).forEach(([partId, prevState]: [string, any]) => {
     const partRef = doc(db, 'inventory', partId);
     if (prevState.isNew) {
       batch.delete(partRef);
@@ -1117,13 +1156,14 @@ export const revertUpload = async (historyId: string, performerUsername: string)
 
   await batch.commit();
 
-  // Log action
+  // Log REVERT action in audit history
   await logAction(
-    performerUsername,
-    'DELETE',
+    username,
+    'REVERT',
     'inventory',
     record.factoryId,
-    `Reverted upload ${historyId} (${record.fileName}) for factory ${record.factoryId}`
+    `Reverted upload ${historyId} (${record.fileName}) for factory ${record.factoryId}`,
+    { userName: username, plantId: record.factoryId, plantName: record.factoryId }
   );
 };
 

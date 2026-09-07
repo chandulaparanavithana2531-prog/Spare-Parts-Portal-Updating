@@ -673,13 +673,17 @@ function App() {
     }
   }, [selectedReportFactory, selectedReportType]);
 
-  const handleRevertUpload = async (historyId: string) => {
-    if (!currentUser || currentUser.role !== 'admin') return;
-    if (!confirm("Are you sure you want to revert this upload? This will roll back the stock count changes to their exact previous state.")) return;
+  const handleRevertUpload = async (historyId: string, timestamp?: number) => {
+    if (!currentUser || currentUser.role !== 'admin') {
+      alert("Unauthorized: Only system administrators can revert inventory history.");
+      return;
+    }
+    const timestampFormatted = timestamp ? new Date(timestamp).toLocaleString() : 'this time';
+    if (!confirm(`Are you sure you want to revert this upload from ${timestampFormatted}? This will roll back stock updates associated with batch ${historyId}.`)) return;
     
     setIsRevertingUpload(historyId);
     try {
-      await revertUpload(historyId, currentUser.username);
+      await revertUpload(historyId, currentUser);
       alert("Upload successfully reverted!");
       await refreshData();
     } catch (err: any) {
@@ -1402,7 +1406,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
             {/* Middle part: Navigation Menu Links */}
             <div className="flex-1 px-3 py-4 space-y-1 overflow-y-auto min-h-0">
               {(['dashboard', 'inventory', 'orders', 'users', 'audit', 'manage-data'] as const).map((tab) => {
-                if ((tab === 'users' || tab === 'audit') && currentUser.role !== 'admin') return null;
+                if (tab === 'users' && currentUser.role !== 'admin') return null;
                 
                 const isActive = activeTab === tab;
                 const icons = {
@@ -1534,7 +1538,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
         {/* Middle part: Navigation Menu Links */}
         <div className="flex-1 px-3 py-4 space-y-1 overflow-y-auto min-h-0">
           {(['dashboard', 'inventory', 'orders', 'users', 'audit', 'manage-data'] as const).map((tab) => {
-            if ((tab === 'users' || tab === 'audit') && currentUser.role !== 'admin') return null;
+            if (tab === 'users' && currentUser.role !== 'admin') return null;
             
             const isActive = activeTab === tab;
             const icons = {
@@ -2346,7 +2350,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
                                 <th className="px-4 py-3 text-left">Report Date</th>
                                 <th className="px-4 py-3 text-left">Uploaded By</th>
                                 <th className="px-4 py-3 text-left">Details</th>
-                                {currentUser.role === 'admin' && <th className="px-4 py-3 text-center">Action</th>}
+                                <th className="px-4 py-3 text-center">Action</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200 font-semibold text-gray-700">
@@ -2358,7 +2362,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
                                 if (filteredLogs.length === 0) {
                                   return (
                                     <tr>
-                                      <td colSpan={currentUser.role === 'admin' ? 7 : 6} className="px-4 py-8 text-center text-gray-400 font-normal">
+                                      <td colSpan={7} className="px-4 py-8 text-center text-gray-400 font-normal">
                                         No recent uploads found.
                                       </td>
                                     </tr>
@@ -2392,17 +2396,25 @@ Ensure the Excel format is correct and you have a stable internet connection.
                                       <td className="px-4 py-3.5 whitespace-nowrap font-mono">{log.reportDate || 'N/A'}</td>
                                       <td className="px-4 py-3.5 whitespace-nowrap">{log.uploadedBy}</td>
                                       <td className="px-4 py-3.5">{detailsText}</td>
-                                      {currentUser.role === 'admin' && (
-                                        <td className="px-4 py-3 text-center whitespace-nowrap">
+                                      <td className="px-4 py-3 text-center whitespace-nowrap">
+                                        {currentUser.role === 'admin' ? (
                                           <button
-                                            onClick={() => handleRevertUpload(log.id)}
+                                            onClick={() => handleRevertUpload(log.id, log.timestamp)}
                                             disabled={isRevertingUpload !== null}
                                             className="px-2.5 py-1 text-[10px] font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded transition-all disabled:opacity-50"
                                           >
                                             {isRevertingUpload === log.id ? 'Reverting...' : 'Revert'}
                                           </button>
-                                        </td>
-                                      )}
+                                        ) : (
+                                          <button
+                                            disabled
+                                            title="Admin privileges required to revert actions"
+                                            className="px-2.5 py-1 text-[10px] font-bold text-gray-400 bg-gray-100 rounded cursor-not-allowed opacity-60"
+                                          >
+                                            Revert
+                                          </button>
+                                        )}
+                                      </td>
                                     </tr>
                                   );
                                 });

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Clock, User as UserIcon, Tag, Info, RefreshCw, ShieldAlert, Trash2, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
-import { clearAuditLogs, restoreSparePart, permanentDeleteSparePart } from '../services/db';
+import { clearAuditLogs, restoreSparePart, permanentDeleteSparePart, revertUpload } from '../services/db';
 import { getAuditLogs } from '../services/audit';
 import { User } from '../types';
 
@@ -18,6 +18,8 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({ currentUser }) => {
     const [endDate, setEndDate] = useState('');
     const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
+    const isAdmin = currentUser?.role === 'admin' || currentUser?.username === 'admin' || currentUser?.username === 'admin@spareshare.com';
+
     const fetchLogs = async () => {
         setLoading(true);
         const data = await getAuditLogs(300);
@@ -29,7 +31,39 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({ currentUser }) => {
         fetchLogs();
     }, []);
 
+    const handleRevert = async (log: any) => {
+        if (!isAdmin) {
+            alert("Unauthorized: Only system administrators can revert inventory history.");
+            return;
+        }
+
+        const batchId = log.batchId || log.historyId || log.entityId || log.id;
+        const timestampFormatted = new Date(log.timestamp || log.created_at || Date.now()).toLocaleString();
+
+        // Exact required confirmation dialog
+        const confirmed = window.confirm(
+            `Are you sure you want to revert this upload from ${timestampFormatted}? This will roll back stock updates associated with batch ${batchId}.`
+        );
+        if (!confirmed) return;
+
+        setLoading(true);
+        try {
+            await revertUpload(batchId, currentUser);
+            alert("Upload successfully reverted!");
+            await fetchLogs();
+        } catch (err: any) {
+            console.error("Revert action error:", err);
+            alert(`Failed to revert action: ${err.message || String(err)}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleRestore = async (log: any) => {
+        if (!isAdmin) {
+            alert("Unauthorized: Admin privileges required to restore items.");
+            return;
+        }
         if (confirm(`Are you sure you want to restore the item: ${log.details || log.entityId}?`)) {
             setLoading(true);
             try {
@@ -45,6 +79,10 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({ currentUser }) => {
     };
 
     const handlePermanentDelete = async (log: any) => {
+        if (!isAdmin) {
+            alert("Unauthorized: Admin privileges required to permanently delete items.");
+            return;
+        }
         if (confirm(`WARNING: This action cannot be undone. Are you sure you want to PERMANENTLY delete the item with ID: ${log.entityId}?`)) {
             setLoading(true);
             try {
@@ -83,6 +121,8 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({ currentUser }) => {
                 if (actionLower !== 'deleted' && actionLower !== 'delete') return false;
             } else if (selectedAction === 'Restored') {
                 if (actionLower !== 'restored') return false;
+            } else if (selectedAction === 'Reverted') {
+                if (actionLower !== 'reverted' && actionLower !== 'revert') return false;
             }
         }
 
@@ -115,6 +155,9 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({ currentUser }) => {
                 return 'bg-red-100 text-red-700 border border-red-200';
             case 'RESTORED':
                 return 'bg-teal-100 text-teal-700 border border-teal-200';
+            case 'REVERT':
+            case 'REVERTED':
+                return 'bg-purple-100 text-purple-700 border border-purple-200';
             case 'CLEAR_DATABASE':
                 return 'bg-orange-100 text-orange-700 border border-orange-200';
             default:
@@ -168,28 +211,30 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({ currentUser }) => {
                     <div className="flex flex-wrap items-center gap-3">
                         <span className="text-xs font-bold text-gray-400 mr-2">{filteredLogs.length} Events Filtered</span>
                         
-                        <button
-                            onClick={async () => {
-                                if (confirm("DANGER: This will delete ALL security audit logs permanently. Are you sure?")) {
-                                    setLoading(true);
-                                    try {
-                                        await clearAuditLogs(currentUser.username);
-                                        await fetchLogs();
-                                        alert("Audit logs cleared successfully.");
-                                    } catch (e) {
-                                        console.error(e);
-                                        alert("Failed to clear logs.");
-                                    } finally {
-                                        setLoading(false);
+                        {isAdmin && (
+                            <button
+                                onClick={async () => {
+                                    if (confirm("DANGER: This will delete ALL security audit logs permanently. Are you sure?")) {
+                                        setLoading(true);
+                                        try {
+                                            await clearAuditLogs(currentUser.username);
+                                            await fetchLogs();
+                                            alert("Audit logs cleared successfully.");
+                                        } catch (e) {
+                                            console.error(e);
+                                            alert("Failed to clear logs.");
+                                        } finally {
+                                            setLoading(false);
+                                        }
                                     }
-                                }
-                            }}
-                            disabled={loading}
-                            className="p-3 text-red-500 bg-red-50/50 border border-red-100 rounded-2xl hover:bg-red-55 hover:text-red-650 transition-all disabled:opacity-50"
-                            title="Clear All Logs"
-                        >
-                            <Trash2 className="w-4 h-4" />
-                        </button>
+                                }}
+                                disabled={loading}
+                                className="p-3 text-red-500 bg-red-50/50 border border-red-100 rounded-2xl hover:bg-red-55 hover:text-red-650 transition-all disabled:opacity-50"
+                                title="Clear All Logs"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                        )}
 
                         <button
                             onClick={fetchLogs}
@@ -228,9 +273,10 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({ currentUser }) => {
                         >
                             <option value="All">All Actions</option>
                             <option value="Created">Created</option>
-                            <option value="Edited">Edited / Updated</option>
+                            <option value="Edited">Edited / Updated / Upload</option>
                             <option value="Deleted">Deleted</option>
                             <option value="Restored">Restored</option>
+                            <option value="Reverted">Reverted</option>
                         </select>
                     </div>
 
@@ -268,7 +314,7 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({ currentUser }) => {
                                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Plant Location</th>
                                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Action Type</th>
                                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Entity Affected</th>
-                                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] text-center">Actions</th>
+                                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] text-center">Action</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
@@ -295,12 +341,15 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({ currentUser }) => {
                                     const parsedChanges = parseChanges(log.changes);
                                     const hasChanges = parsedChanges && Object.keys(parsedChanges).length > 0;
                                     const isExpanded = expandedLogId === log.id;
-                                    const isDeleted = (log.action || '').toUpperCase() === 'DELETED' || (log.action || '').toUpperCase() === 'DELETE';
+                                    const actionUpper = (log.action || '').toUpperCase();
+                                    const isDeleted = actionUpper === 'DELETED' || actionUpper === 'DELETE';
+                                    const isRevertable = actionUpper === 'UPLOAD' || actionUpper === 'UPDATE' || actionUpper === 'UPDATED';
                                     
                                     // Derive User Info
                                     const name = log.user_name || log.userId;
-                                    const role = log.userId === 'admin' ? 'Admin' : 'User';
-                                    const email = log.userId.includes('@') ? log.userId : (log.userId === 'admin' ? 'admin@spareshare.com' : 'N/A');
+                                    const isUserAdmin = log.userId === 'admin' || (log.userId && log.userId.includes('admin'));
+                                    const role = isUserAdmin ? 'Admin' : 'User';
+                                    const email = log.userId && log.userId.includes('@') ? log.userId : (isUserAdmin ? 'admin@spareshare.com' : 'user@spareshare.com');
 
                                     return (
                                         <React.Fragment key={log.id}>
@@ -364,33 +413,60 @@ export const AuditLogs: React.FC<AuditLogsProps> = ({ currentUser }) => {
                                                     <div className="flex flex-col">
                                                         <span className="text-[12px] font-bold text-gray-700 flex items-center gap-1">
                                                             <Tag className="w-3 h-3 text-gray-400" />
-                                                            {log.entityType || 'inventory'}
+                                                            {log.entityType || 'inventory'} - {log.plant_name || log.plant_id || 'System'}
                                                         </span>
                                                         <span className="text-[10px] font-mono text-gray-400 mt-0.5">ID: {log.entityId}</span>
                                                     </div>
                                                 </td>
 
-                                                {/* Actions */}
+                                                {/* Action (Revert / Revise button) */}
                                                 <td className="px-6 py-4 whitespace-nowrap text-center">
                                                     {isDeleted ? (
                                                         <div className="flex items-center justify-center gap-2">
+                                                            {isAdmin ? (
+                                                                <>
+                                                                    <button
+                                                                        onClick={() => handleRestore(log)}
+                                                                        className="flex items-center gap-1 px-3 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-700 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all duration-200 border border-teal-200 cursor-pointer"
+                                                                        title="Restore Deleted Item"
+                                                                    >
+                                                                        <RotateCcw className="w-3.5 h-3.5" />
+                                                                        Restore
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handlePermanentDelete(log)}
+                                                                        className="flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all duration-200 border border-red-200 cursor-pointer"
+                                                                        title="Permanently Delete Item"
+                                                                    >
+                                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                                        Hard Delete
+                                                                    </button>
+                                                                </>
+                                                            ) : (
+                                                                <span className="text-[11px] text-gray-400 font-medium italic" title="Admin privileges required">Admin privileges required</span>
+                                                            )}
+                                                        </div>
+                                                    ) : isRevertable || actionUpper === 'UPLOAD' ? (
+                                                        isAdmin ? (
                                                             <button
-                                                                onClick={() => handleRestore(log)}
-                                                                className="flex items-center gap-1 px-3 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-700 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all duration-200 border border-teal-200 cursor-pointer"
-                                                                title="Restore Deleted Item"
+                                                                onClick={() => handleRevert(log)}
+                                                                disabled={loading}
+                                                                className="flex items-center gap-1 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all duration-200 border border-amber-200 cursor-pointer shadow-sm"
+                                                                title="Revert upload/revision action"
                                                             >
                                                                 <RotateCcw className="w-3.5 h-3.5" />
-                                                                Restore
+                                                                Revert
                                                             </button>
+                                                        ) : (
                                                             <button
-                                                                onClick={() => handlePermanentDelete(log)}
-                                                                className="flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all duration-200 border border-red-200 cursor-pointer"
-                                                                title="Permanently Delete Item"
+                                                                disabled
+                                                                className="flex items-center gap-1 px-3 py-1.5 bg-gray-100 text-gray-400 text-[10px] font-bold uppercase tracking-wider rounded-xl border border-gray-200 cursor-not-allowed opacity-60"
+                                                                title="Admin privileges required to revert actions"
                                                             >
-                                                                <Trash2 className="w-3.5 h-3.5" />
-                                                                Hard Delete
+                                                                <RotateCcw className="w-3.5 h-3.5" />
+                                                                Revert
                                                             </button>
-                                                        </div>
+                                                        )
                                                     ) : (
                                                         <span className="text-[11px] text-gray-400 font-medium italic">Active Log</span>
                                                     )}

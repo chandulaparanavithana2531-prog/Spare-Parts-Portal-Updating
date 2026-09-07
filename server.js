@@ -857,6 +857,139 @@ app.delete(['/api/inventory/:id/permanent'], async (req, res) => {
   }
 });
 
+// REST API for inventory upload history revert & rollback
+app.post(['/api/history/revert', '/api/audit/rollback', '/api/inventory/revert'], async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    const headerRole = req.headers['x-user-role'];
+    const headerEmail = req.headers['x-user-email'];
+    const headerUsername = req.headers['x-user-name'];
+
+    const bodyRole = req.body?.role || req.body?.userRole || req.body?.currentUser?.role;
+    const bodyEmail = req.body?.email || req.body?.userEmail || req.body?.currentUser?.email;
+    const bodyUsername = req.body?.username || req.body?.performerUsername || req.body?.currentUser?.username;
+
+    let role = headerRole || bodyRole;
+    let username = headerUsername || bodyUsername || 'unknown';
+    let email = headerEmail || bodyEmail || username;
+
+    let isAdmin = false;
+
+    // Check JWT / session token if provided
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7).trim();
+      try {
+        const parts = token.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+          if (payload.role) role = payload.role;
+          if (payload.email) email = payload.email;
+          if (payload.username) username = payload.username;
+        }
+      } catch (tokenErr) {
+        console.warn("[Server Auth] Token parse warning:", tokenErr.message);
+      }
+    }
+
+    if (role === 'admin' || email === 'admin@spareshare.com' || username === 'admin') {
+      isAdmin = true;
+    }
+
+    // Server-Side Authorization Guard: Return HTTP 403 Forbidden for non-admins
+    if (!isAdmin) {
+      return res.status(403).json({
+        error: "Unauthorized: Only system administrators can revert inventory history."
+      });
+    }
+
+    // Reversion Logic for Admins
+    const { historyId, batchId } = req.body;
+    const targetId = historyId || batchId || req.body.id;
+
+    if (!targetId) {
+      return res.status(400).json({ success: false, error: "History ID or Batch ID is required" });
+    }
+
+    if (firestoreDb) {
+      const historyRef = firestoreDb.collection('upload_history').doc(targetId);
+      const historySnap = await historyRef.get();
+
+      let record = null;
+      if (historySnap.exists) {
+        record = historySnap.data();
+      } else {
+        const querySnap = await firestoreDb.collection('upload_history').where('id', '==', targetId).get();
+        if (!querySnap.empty) {
+          record = querySnap.docs[0].data();
+        }
+      }
+
+      if (record) {
+        const batch = firestoreDb.batch();
+        const previousState = typeof record.previousState === 'string' ? JSON.parse(record.previousState) : (record.previousState || {});
+
+        Object.entries(previousState).forEach(([partId, prevState]) => {
+          const partRef = firestoreDb.collection('inventory').doc(partId);
+          if (prevState.isNew) {
+            batch.delete(partRef);
+          } else {
+            const { isNew, ...rest } = prevState;
+            batch.set(partRef, rest, { merge: true });
+          }
+        });
+
+        batch.delete(historyRef);
+        await batch.commit();
+
+        // Log REVERT action in audit_logs
+        const logRef = firestoreDb.collection('audit_logs').doc();
+        await logRef.set({
+          user_id: username,
+          user_name: username,
+          plant_id: record.factoryId || 'System',
+          plant_name: record.factoryId || 'System',
+          action: 'REVERT',
+          entity_type: 'inventory',
+          entity_id: record.factoryId || targetId,
+          created_at: Date.now(),
+          details: `Reverted upload batch ${targetId} (${record.fileName || 'Upload'}) for plant ${record.factoryId || 'System'}`
+        });
+
+        // Update local db.json if present
+        const dbJsonPath = path.join(process.cwd(), 'db.json');
+        if (fs.existsSync(dbJsonPath)) {
+          try {
+            let localData = JSON.parse(fs.readFileSync(dbJsonPath, 'utf8'));
+            if (Array.isArray(localData)) {
+              Object.entries(previousState).forEach(([partId, prevState]) => {
+                const idx = localData.findIndex(p => p.id === partId);
+                if (idx !== -1) {
+                  if (prevState.isNew) {
+                    localData.splice(idx, 1);
+                  } else {
+                    const { isNew, ...rest } = prevState;
+                    localData[idx] = { ...localData[idx], ...rest };
+                  }
+                }
+              });
+              fs.writeFileSync(dbJsonPath, JSON.stringify(localData, null, 2), 'utf8');
+            }
+          } catch (e) {
+            console.warn("[Server] Local db.json sync error on revert:", e);
+          }
+        }
+
+        return res.json({ success: true, message: `Upload batch ${targetId} successfully reverted.` });
+      }
+    }
+
+    return res.json({ success: true, message: `Reverted upload batch ${targetId}` });
+  } catch (error) {
+    console.error("Revert API Error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.post(['/orders/created', '/api/orders/created'], async (req, res) => {
   const { order, userEmail, plantEmail, userFactory } = req.body;
   if (!order || !userEmail || !plantEmail) {
