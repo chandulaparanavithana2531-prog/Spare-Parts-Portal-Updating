@@ -145,6 +145,15 @@ export function findColIndex(headers: any[], ...candidates: string[]): number {
   });
 }
 
+export function isInvalidItemCode(raw: any): boolean {
+  if (raw === null || raw === undefined) return true;
+  const s = String(raw).trim().toLowerCase();
+  if (!s || s === '' || s === 'nan' || s === 'null' || s === 'undefined') return true;
+  if (s === 'total' || s === 'grand total' || s === 'subtotal' || s === 'row labels') return true;
+  if (s === 'material' || s === 'material number' || s === 'material no' || s === 'item code' || s === 'item') return true;
+  return false;
+}
+
 /**
  * Normalises raw plant name input to canonical PlantId
  */
@@ -178,24 +187,15 @@ export interface DetectionResult {
  *   - "Sum of Unrestricted" -> LT (SAP)
  *   - "Item Description" and "Qty" (or "Sub") without "Organization" -> RCL-H (Oracle)
  *   - "Item Category" and "Organization" -> RCL-E (Oracle)
- *   - Fallback to fallbackPlant if ambiguous.
  */
-export function detectPlantAndFormat(workbook: XLSX.WorkBook, fallbackPlant: string = 'Lanka Tiles'): DetectionResult {
+export function detectPlantAndFormat(
+  workbook: XLSX.WorkBook,
+  fallbackPlant: string = 'Lanka Tiles'
+): DetectionResult {
+  const resolvedFallback = resolvePlantId(fallbackPlant);
   const sheetNames = workbook.SheetNames;
-  const resolvedFallback = resolvePlantId(fallbackPlant, 'Lanka Tiles');
-
-  // Check all sheet names first
-  for (const name of sheetNames) {
-    const cleanName = name.replace(/\s+/g, ' ').trim().toLowerCase();
-    if (cleanName.includes('current inventory status')) {
-      return { format: 'SAP', plantId: 'Lanka Tiles', schemaType: 'SAP_LT' };
-    }
-    if (cleanName.includes('spare parts') && !cleanName.includes('rcl')) {
-      return { format: 'SAP', plantId: 'Lanka Wall Tiles', schemaType: 'SAP_LWT' };
-    }
-    if (/^gs\s/i.test(name.trim())) {
-      return { format: 'ORACLE', plantId: 'Rocell Eheliyagoda', schemaType: 'ORACLE_RCLE' };
-    }
+  if (!sheetNames || sheetNames.length === 0) {
+    return { format: 'UNKNOWN', plantId: resolvedFallback, schemaType: 'UNKNOWN' };
   }
 
   // Inspect first sheet headers up to 10 rows
@@ -299,7 +299,7 @@ export function parseSAP_LT(
     if (!row || row.length === 0) { skipped++; continue; }
 
     const rawMatNum = String(row[matNumIdx] ?? '').trim();
-    if (!rawMatNum || rawMatNum === '' || rawMatNum.toLowerCase() === 'total' || rawMatNum.toLowerCase() === 'grand total' || rawMatNum.toLowerCase() === 'nan') {
+    if (isInvalidItemCode(rawMatNum)) {
       skipped++;
       continue;
     }
@@ -379,7 +379,7 @@ export function parseSAP_LWT(
     if (!row || row.length === 0) { skipped++; continue; }
 
     const rawMatNum = String(row[matIdx] ?? '').trim();
-    if (!rawMatNum || rawMatNum === '' || rawMatNum.toLowerCase() === 'total' || rawMatNum.toLowerCase() === 'grand total' || rawMatNum.toLowerCase() === 'nan') {
+    if (isInvalidItemCode(rawMatNum)) {
       skipped++;
       continue;
     }
@@ -460,13 +460,7 @@ export function parseOracle_RCLH(
     if (!row || row.length === 0) { skipped++; continue; }
 
     const rawCode = String(row[codeIdx] ?? '').trim();
-    if (
-      !rawCode ||
-      rawCode === '' ||
-      rawCode.toLowerCase() === 'nan' ||
-      rawCode.toLowerCase() === 'total' ||
-      rawCode.toLowerCase() === 'grand total'
-    ) {
+    if (isInvalidItemCode(rawCode)) {
       skipped++;
       continue;
     }
@@ -541,13 +535,7 @@ export function parseOracle_RCLE(
     if (!row || row.length === 0) { skipped++; continue; }
 
     const rawCode = colCode !== -1 ? String(row[colCode] ?? '').trim() : '';
-    if (
-      !rawCode ||
-      rawCode === '' ||
-      rawCode.toLowerCase() === 'nan' ||
-      rawCode.toLowerCase() === 'total' ||
-      rawCode.toLowerCase() === 'grand total'
-    ) {
+    if (isInvalidItemCode(rawCode)) {
       skipped++;
       continue;
     }

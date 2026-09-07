@@ -1479,6 +1479,15 @@ function findColIdxServer(headers, ...candidates) {
   });
 }
 
+function isInvalidItemCodeServer(raw) {
+  if (raw === null || raw === undefined) return true;
+  const s = String(raw).trim().toLowerCase();
+  if (!s || s === '' || s === 'nan' || s === 'null' || s === 'undefined') return true;
+  if (s === 'total' || s === 'grand total' || s === 'subtotal' || s === 'row labels') return true;
+  if (s === 'material' || s === 'material number' || s === 'material no' || s === 'item code' || s === 'item') return true;
+  return false;
+}
+
 function parseSAP_LT_Server(workbook, plantId) {
   const sheetName = workbook.SheetNames.find(n => n.replace(/\s+/g, ' ').trim().toLowerCase().includes('current inventory status')) ?? workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
@@ -1515,7 +1524,7 @@ function parseSAP_LT_Server(workbook, plantId) {
     if (!row || row.length === 0) { skipped++; continue; }
 
     const rawMatNum = String(row[matNumIdx] ?? '').trim();
-    if (!rawMatNum || rawMatNum === '' || rawMatNum.toLowerCase() === 'total' || rawMatNum.toLowerCase() === 'grand total' || rawMatNum.toLowerCase() === 'nan') {
+    if (isInvalidItemCodeServer(rawMatNum)) {
       skipped++;
       continue;
     }
@@ -1583,7 +1592,7 @@ function parseSAP_LWT_Server(workbook, plantId) {
     if (!row || row.length === 0) { skipped++; continue; }
 
     const rawMatNum = String(row[matIdx] ?? '').trim();
-    if (!rawMatNum || rawMatNum === '' || rawMatNum.toLowerCase() === 'total' || rawMatNum.toLowerCase() === 'grand total' || rawMatNum.toLowerCase() === 'nan') {
+    if (isInvalidItemCodeServer(rawMatNum)) {
       skipped++;
       continue;
     }
@@ -1652,7 +1661,7 @@ function parseOracle_RCLH_Server(workbook, plantId) {
     if (!row || row.length === 0) { skipped++; continue; }
 
     const rawCode = String(row[codeIdx] ?? '').trim();
-    if (!rawCode || rawCode === '' || rawCode.toLowerCase() === 'nan' || rawCode.toLowerCase() === 'total' || rawCode.toLowerCase() === 'grand total') {
+    if (isInvalidItemCodeServer(rawCode)) {
       skipped++;
       continue;
     }
@@ -1714,7 +1723,7 @@ function parseOracle_RCLE_Server(workbook, plantId) {
     if (!row || row.length === 0) { skipped++; continue; }
 
     const rawCode = colCode !== -1 ? String(row[colCode] ?? '').trim() : '';
-    if (!rawCode || rawCode === '' || rawCode.toLowerCase() === 'nan' || rawCode.toLowerCase() === 'total' || rawCode.toLowerCase() === 'grand total') {
+    if (isInvalidItemCodeServer(rawCode)) {
       skipped++;
       continue;
     }
@@ -1746,9 +1755,6 @@ function parseOracle_RCLE_Server(workbook, plantId) {
   return { rows, skipped };
 }
 
-/**
- * Maps a CanonicalInventoryRow → existing SparePart document shape
- */
 function canonicalToSparePart(row, performerUsername, now) {
   const safeId = `${row.plant_id}-${row.item_code}`.replace(/[^a-zA-Z0-9\-_.]/g, '-');
   return {
