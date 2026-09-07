@@ -16,7 +16,7 @@ import {
   X, Upload, CheckCircle2, AlertTriangle, RefreshCw, FileSpreadsheet,
   Building2, Zap, Database, Plus, ArrowRight, Info, TrendingUp, SkipForward,
 } from 'lucide-react';
-import { detectFormat } from '../services/inventorySyncService';
+import { detectPlantAndFormat } from '../services/inventorySyncService';
 import { uploadInventorySync, IngestionSummary } from '../services/apiService';
 import * as XLSX from 'xlsx';
 
@@ -84,6 +84,7 @@ export const InventorySyncModal: React.FC<InventorySyncModalProps> = ({
   const [selectedFile, setSelectedFile]       = useState<File | null>(null);
   const [selectedPlant, setSelectedPlant]     = useState<string>(plants[0]?.id ?? '');
   const [detectedFormat, setDetectedFormat]   = useState<'SAP' | 'ORACLE' | 'UNKNOWN' | null>(null);
+  const [detectedPlantName, setDetectedPlantName] = useState<string | null>(null);
   const [phase, setPhase]                     = useState<UploadPhase>('idle');
   const [progress, setProgress]               = useState<number>(0);
   const [summary, setSummary]                 = useState<IngestionSummary | null>(null);
@@ -98,20 +99,28 @@ export const InventorySyncModal: React.FC<InventorySyncModalProps> = ({
     setSummary(null);
     setErrorMsg('');
     setDetectedFormat(null);
+    setDetectedPlantName(null);
 
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const data = e.target?.result;
         const workbook = XLSX.read(data, { type: 'array' });
-        const fmt = detectFormat(workbook);
-        setDetectedFormat(fmt);
+        const detection = detectPlantAndFormat(workbook, selectedPlant);
+        setDetectedFormat(detection.format);
+        setDetectedPlantName(detection.plantId);
+        if (detection.plantId) {
+          const matchedPlant = plants.find(p => p.id === detection.plantId || p.name === detection.plantId);
+          if (matchedPlant) {
+            setSelectedPlant(matchedPlant.id);
+          }
+        }
       } catch {
         setDetectedFormat('UNKNOWN');
       }
     };
     reader.readAsArrayBuffer(file);
-  }, []);
+  }, [selectedPlant, plants]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

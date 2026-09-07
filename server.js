@@ -1235,58 +1235,106 @@ app.post(['/api/inventory/save-system-report'], async (req, res) => {
 // =============================================================================
 
 /**
- * Detect SAP vs Oracle from workbook.
- * Returns 'SAP', 'ORACLE', or 'UNKNOWN'.
+ * Helper to resolve plant name
  */
-function detectInventoryFormat(workbook) {
+function resolvePlantIdServer(rawName, fallback = 'Lanka Tiles') {
+  if (!rawName) return fallback;
+  const s = String(rawName).trim().toLowerCase();
+  if (s.includes('lanka') && s.includes('wall')) return 'Lanka Wall Tiles';
+  if (s.includes('lanka') && (s.includes('tile') || s.includes('lt'))) return 'Lanka Tiles';
+  if (s.includes('horana') || s.includes('rcl-h') || s.includes('rclh')) return 'Rocell Horana';
+  if (s.includes('eheliyagoda') || s.includes('rcl-e') || s.includes('rcle') || s === 'gsc') return 'Rocell Eheliyagoda';
+  return fallback;
+}
+
+/**
+ * Detect SAP vs Oracle from workbook and determine 4-plant schema type.
+ */
+function detectInventoryFormatServer(workbook, fallbackPlant = 'Lanka Tiles') {
   const sheetNames = workbook.SheetNames;
+  const resolvedFallback = resolvePlantIdServer(fallbackPlant, 'Lanka Tiles');
 
-  // SAP: sheet name includes "Current Inventory Status"
-  if (sheetNames.some(n => n.replace(/\s+/g, ' ').trim().toLowerCase().includes('current inventory status'))) {
-    return 'SAP';
-  }
-  // Oracle: sheet name matches /^GS /i (e.g. "GS June 2026")
-  if (sheetNames.some(n => /^gs\s/i.test(n.trim()))) {
-    return 'ORACLE';
+  for (const name of sheetNames) {
+    const cleanName = name.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (cleanName.includes('current inventory status')) {
+      return { format: 'SAP', plantId: 'Lanka Tiles', schemaType: 'SAP_LT' };
+    }
+    if (cleanName.includes('spare parts') && !cleanName.includes('rcl')) {
+      return { format: 'SAP', plantId: 'Lanka Wall Tiles', schemaType: 'SAP_LWT' };
+    }
+    if (/^gs\s/i.test(name.trim())) {
+      return { format: 'ORACLE', plantId: 'Rocell Eheliyagoda', schemaType: 'ORACLE_RCLE' };
+    }
   }
 
-  // Header-based fallback on first sheet
-  const sheet = workbook.Sheets[sheetNames[0]];
-  if (!sheet) return 'UNKNOWN';
+  const firstSheetName = sheetNames[0];
+  if (!firstSheetName) return { format: 'UNKNOWN', plantId: resolvedFallback, schemaType: 'UNKNOWN' };
+
+  const sheet = workbook.Sheets[firstSheetName];
   const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
   for (let i = 0; i < Math.min(10, rawRows.length); i++) {
     const rowStr = rawRows[i].map(c => String(c ?? '').toLowerCase()).join('|');
-    if (rowStr.includes('sum of unrestricted')) return 'SAP';
-    if (rowStr.includes('organization') && rowStr.includes('item code')) return 'ORACLE';
+
+    if (rowStr.includes('closing stock') && (rowStr.includes('bun') || rowStr.includes('avg rate'))) {
+      return { format: 'SAP', plantId: 'Lanka Wall Tiles', schemaType: 'SAP_LWT' };
+    }
+    if (rowStr.includes('sum of unrestricted') || rowStr.includes('qty (unrestricted)')) {
+      return { format: 'SAP', plantId: 'Lanka Tiles', schemaType: 'SAP_LT' };
+    }
+    if (rowStr.includes('organization') && (rowStr.includes('item category') || rowStr.includes('primary unit of measure'))) {
+      return { format: 'ORACLE', plantId: 'Rocell Eheliyagoda', schemaType: 'ORACLE_RCLE' };
+    }
+    if (
+      rowStr.includes('item description') &&
+      (rowStr.includes('qty') || rowStr.includes('unit cost') || rowStr.includes('sub')) &&
+      !rowStr.includes('organization')
+    ) {
+      return { format: 'ORACLE', plantId: 'Rocell Horana', schemaType: 'ORACLE_RCLH' };
+    }
   }
-  return 'UNKNOWN';
+
+  if (resolvedFallback === 'Lanka Wall Tiles') {
+    return { format: 'SAP', plantId: 'Lanka Wall Tiles', schemaType: 'SAP_LWT' };
+  } else if (resolvedFallback === 'Rocell Horana') {
+    return { format: 'ORACLE', plantId: 'Rocell Horana', schemaType: 'ORACLE_RCLH' };
+  } else if (resolvedFallback === 'Rocell Eheliyagoda') {
+    return { format: 'ORACLE', plantId: 'Rocell Eheliyagoda', schemaType: 'ORACLE_RCLE' };
+  }
+
+  return { format: 'SAP', plantId: 'Lanka Tiles', schemaType: 'SAP_LT' };
 }
 
 function normalizeUOMServer(raw) {
   if (!raw) return 'EACH';
   const s = String(raw).trim().toUpperCase();
   const MAP = {
-    EA: 'EACH', EACH: 'EACH', PC: 'PIECE', PCS: 'PIECE', PIECE: 'PIECE',
-    KG: 'KG', KGS: 'KG', LT: 'LITRE', LTR: 'LITRE', LITRE: 'LITRE', LITER: 'LITRE',
+    EA: 'EACH', EACH: 'EACH', EACHES: 'EACH', PC: 'PIECE', PCS: 'PIECE', PIECE: 'PIECE', PIECES: 'PIECE',
+    KG: 'KG', KGS: 'KG', KILOGRAM: 'KG', LT: 'LITRE', LTR: 'LITRE', LITRE: 'LITRE', LITER: 'LITRE',
     M: 'METRE', MTR: 'METRE', METRE: 'METRE', METER: 'METRE',
-    NOS: 'NOS', NO: 'NOS', SET: 'SET', SETS: 'SET',
+    NOS: 'NOS', NO: 'NOS', NUM: 'NOS', SET: 'SET', SETS: 'SET',
     BOX: 'BOX', PK: 'PACK', PACK: 'PACK', ROLL: 'ROLL', ROL: 'ROLL',
-    FT: 'FEET', IN: 'INCH', L: 'LITRE',
+    FT: 'FEET', IN: 'INCH', L: 'LITRE', PAIR: 'PAIR', PAIRS: 'PAIR', CAN: 'CAN', BTL: 'BOTTLE', BOTTLE: 'BOTTLE',
   };
   return MAP[s] ?? s;
 }
 
 function toFloatServer(val) {
   if (val === null || val === undefined || val === '') return 0;
-  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (typeof val === 'number') {
+    if (isNaN(val) || val < 0) return 0;
+    return val;
+  }
   const cleaned = String(val).replace(/[^0-9.\-]/g, '');
   const parsed = parseFloat(cleaned);
-  return isNaN(parsed) ? 0 : parsed;
+  if (isNaN(parsed) || parsed < 0) return 0;
+  return parsed;
 }
 
 function stripLeadingZerosServer(s) {
-  if (/^\d+$/.test(s)) return String(parseInt(s, 10));
-  return s;
+  const trimmed = String(s ?? '').trim();
+  if (/^\d+$/.test(trimmed)) return String(parseInt(trimmed, 10));
+  return trimmed;
 }
 
 function findColIdxServer(headers, ...candidates) {
@@ -1297,39 +1345,32 @@ function findColIdxServer(headers, ...candidates) {
   });
 }
 
-/**
- * Parse SAP " Current Inventory Status " sheet.
- * Header at row index 2 (0-based). Columns B–F mapped positionally / by name.
- */
-function parseSAPInventoryServer(workbook, plantId) {
-  const sheetName =
-    workbook.SheetNames.find(n => n.replace(/\s+/g, ' ').trim().toLowerCase().includes('current inventory status'))
-    ?? workbook.SheetNames[0];
-
+function parseSAP_LT_Server(workbook, plantId) {
+  const sheetName = workbook.SheetNames.find(n => n.replace(/\s+/g, ' ').trim().toLowerCase().includes('current inventory status')) ?? workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
   const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: true });
 
-  // Locate header row
   let headerIdx = 2;
   for (let i = 0; i < Math.min(10, rawRows.length); i++) {
     const rowStr = rawRows[i].map(c => String(c ?? '').toLowerCase()).join('|');
-    if (rowStr.includes('material number') || rowStr.includes('sum of unrestricted')) {
+    if (rowStr.includes('material number') || rowStr.includes('sum of unrestricted') || rowStr.includes('material description')) {
       headerIdx = i;
       break;
     }
   }
 
   const headers = rawRows[headerIdx] ?? [];
-  const matNumIdx = findColIdxServer(headers, 'Material Number', 'Material No', 'Material') !== -1
-    ? findColIdxServer(headers, 'Material Number', 'Material No', 'Material') : 1;
+  const matNumIdx = findColIdxServer(headers, 'Material Number', 'Material No', 'Material', 'Item Code') !== -1
+    ? findColIdxServer(headers, 'Material Number', 'Material No', 'Material', 'Item Code') : 1;
   const oldMatIdx = findColIdxServer(headers, 'Old material number', 'Old Material', 'Old Mat No') !== -1
     ? findColIdxServer(headers, 'Old material number', 'Old Material', 'Old Mat No') : 2;
   const descIdx   = findColIdxServer(headers, 'Material Description', 'Description') !== -1
     ? findColIdxServer(headers, 'Material Description', 'Description') : 3;
   const uomIdx    = findColIdxServer(headers, 'Base Unit of Measure', 'UoM', 'Unit of Measure', 'UOM') !== -1
     ? findColIdxServer(headers, 'Base Unit of Measure', 'UoM', 'Unit of Measure', 'UOM') : 4;
-  const qtyIdx    = findColIdxServer(headers, 'Sum of Unrestricted', 'Unrestricted', 'Stock Qty', 'Quantity') !== -1
-    ? findColIdxServer(headers, 'Sum of Unrestricted', 'Unrestricted', 'Stock Qty', 'Quantity') : 5;
+  const qtyIdx    = findColIdxServer(headers, 'Sum of Unrestricted', 'Unrestricted', 'Qty on Hand', 'Stock Qty', 'Quantity', 'Qty') !== -1
+    ? findColIdxServer(headers, 'Sum of Unrestricted', 'Unrestricted', 'Qty on Hand', 'Stock Qty', 'Quantity', 'Qty') : 5;
+  const valIdx    = findColIdxServer(headers, 'Value (LKR)', 'Value', 'Total Value');
 
   const now = Date.now();
   const rows = [];
@@ -1340,60 +1381,64 @@ function parseSAPInventoryServer(workbook, plantId) {
     if (!row || row.length === 0) { skipped++; continue; }
 
     const rawMatNum = String(row[matNumIdx] ?? '').trim();
-    if (!rawMatNum || rawMatNum.toLowerCase() === 'total' || rawMatNum.toLowerCase() === 'grand total') {
+    if (!rawMatNum || rawMatNum === '' || rawMatNum.toLowerCase() === 'total' || rawMatNum.toLowerCase() === 'grand total' || rawMatNum.toLowerCase() === 'nan') {
       skipped++;
       continue;
     }
 
     const itemCode = stripLeadingZerosServer(rawMatNum);
+    const legacyCode = oldMatIdx !== -1 ? (String(row[oldMatIdx] ?? '').trim() || null) : null;
+    const desc       = String(row[descIdx] ?? '').trim() || 'No Description';
+    const uom        = normalizeUOMServer(String(row[uomIdx] ?? ''));
+    const qty        = toFloatServer(row[qtyIdx]);
+    const totalVal   = valIdx !== -1 ? toFloatServer(row[valIdx]) : null;
+
     rows.push({
-      plant_id: plantId,
-      item_code: itemCode,
-      legacy_item_code: String(row[oldMatIdx] ?? '').trim() || null,
-      description: String(row[descIdx] ?? '').trim() || 'No Description',
-      category: null,
-      quantity_on_hand: toFloatServer(row[qtyIdx]),
-      uom: normalizeUOMServer(String(row[uomIdx] ?? '')),
-      unit_cost: null,
-      total_value: null,
-      source_system: 'SAP',
-      last_synced_at: now,
+      plant_id:        plantId,
+      item_code:       itemCode,
+      legacy_item_code: legacyCode,
+      description:     desc,
+      category:        null,
+      quantity_on_hand: qty,
+      uom,
+      unit_cost:       null,
+      total_value:     totalVal && totalVal > 0 ? totalVal : null,
+      source_system:   'SAP',
+      last_synced_at:  now,
     });
   }
 
   return { rows, skipped };
 }
 
-/**
- * Parse Oracle "GS ..." inventory sheet.
- * Header at row index 2 (0-based).
- */
-function parseOracleInventoryServer(workbook, plantId) {
-  const sheetName =
-    workbook.SheetNames.find(n => /^gs\s/i.test(n.trim()))
-    ?? workbook.SheetNames[0];
-
+function parseSAP_LWT_Server(workbook, plantId) {
+  const sheetName = workbook.SheetNames.find(n => n.toLowerCase().includes('spare parts') || n.toLowerCase().includes('stock with images') || n.toLowerCase().includes('lwt')) ?? workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
   const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: true });
 
-  let headerIdx = 2;
+  let headerIdx = 3;
   for (let i = 0; i < Math.min(10, rawRows.length); i++) {
     const rowStr = rawRows[i].map(c => String(c ?? '').toLowerCase()).join('|');
-    if (rowStr.includes('item code') && rowStr.includes('description')) {
+    if (rowStr.includes('material') || rowStr.includes('closing stock') || rowStr.includes('description')) {
       headerIdx = i;
       break;
     }
   }
 
   const headers = rawRows[headerIdx] ?? [];
-  const colOrg      = findColIdxServer(headers, 'Organization', 'Org', 'Plant');
-  const colCat      = findColIdxServer(headers, 'Item Category', 'Category');
-  const colItemCode = findColIdxServer(headers, 'Item Code', 'ItemCode', 'Item');
-  const colDesc     = findColIdxServer(headers, 'Description', 'Item Description');
-  const colUOM      = findColIdxServer(headers, 'Primary Unit Of Measure', 'UOM', 'Unit of Measure', 'UoM');
-  const colQty      = findColIdxServer(headers, 'Quantity', 'On Hand Quantity', 'Qty');
-  const colCost     = findColIdxServer(headers, 'Unit Cost', 'Unit Price', 'Cost');
-  const colValue    = findColIdxServer(headers, 'Inventory Value', 'Total Value', 'Value');
+  const colMat   = findColIdxServer(headers, 'Material', 'Material Number', 'Material No', 'Item Code');
+  const colDesc  = findColIdxServer(headers, 'Material Description', 'Description');
+  const colStock = findColIdxServer(headers, 'Closing Stock', 'Qty on Hand', 'Qty (Closing Stock)', 'Qty', 'Quantity');
+  const colBUn   = findColIdxServer(headers, 'BUn', 'UOM', 'Base Unit of Measure', 'Unit of Measure');
+  const colRate  = findColIdxServer(headers, 'Avg Rate.', 'Avg Rate', 'Unit Cost', 'Price');
+  const colValue = findColIdxServer(headers, 'Closing Value', 'Value (LKR)', 'Total Value', 'Value');
+
+  const matIdx   = colMat   !== -1 ? colMat   : 1;
+  const descIdx  = colDesc  !== -1 ? colDesc  : 2;
+  const stockIdx = colStock !== -1 ? colStock : 3;
+  const bunIdx   = colBUn   !== -1 ? colBUn   : 4;
+  const valueIdx = colValue !== -1 ? colValue : 5;
+  const rateIdx  = colRate  !== -1 ? colRate  : 7;
 
   const now = Date.now();
   const rows = [];
@@ -1403,26 +1448,162 @@ function parseOracleInventoryServer(workbook, plantId) {
     const row = rawRows[i];
     if (!row || row.length === 0) { skipped++; continue; }
 
-    const rawItemCode = String(row[colItemCode] ?? '').trim();
-    if (!rawItemCode || rawItemCode === '' || rawItemCode.toLowerCase() === 'nan' || rawItemCode.toLowerCase().includes('total')) {
+    const rawMatNum = String(row[matIdx] ?? '').trim();
+    if (!rawMatNum || rawMatNum === '' || rawMatNum.toLowerCase() === 'total' || rawMatNum.toLowerCase() === 'grand total' || rawMatNum.toLowerCase() === 'nan') {
       skipped++;
       continue;
     }
 
-    const orgRaw       = colOrg !== -1 ? String(row[colOrg] ?? '').trim() : '';
-    const resolvedPlant = orgRaw || plantId;
-    const unitCostRaw  = colCost  !== -1 ? toFloatServer(row[colCost])  : null;
-    const totalValRaw  = colValue !== -1 ? toFloatServer(row[colValue]) : null;
+    const itemCode = stripLeadingZerosServer(rawMatNum);
+    const desc     = String(row[descIdx] ?? '').trim() || 'No Description';
+    const qty      = toFloatServer(row[stockIdx]);
+    const uom      = normalizeUOMServer(String(row[bunIdx] ?? ''));
+    const unitCost = colRate !== -1 ? toFloatServer(row[rateIdx]) : null;
+    const totVal   = colValue !== -1 ? toFloatServer(row[valueIdx]) : null;
+
+    rows.push({
+      plant_id:        plantId,
+      item_code:       itemCode,
+      description:     desc,
+      category:        null,
+      quantity_on_hand: qty,
+      uom,
+      unit_cost:       unitCost && unitCost > 0 ? unitCost : null,
+      total_value:     totVal && totVal > 0 ? totVal : (unitCost ? unitCost * qty : null),
+      source_system:   'SAP',
+      last_synced_at:  now,
+    });
+  }
+
+  return { rows, skipped };
+}
+
+function parseOracle_RCLH_Server(workbook, plantId) {
+  const sheetName = workbook.SheetNames.find(n => n.toLowerCase().includes('sheet1') || n.toLowerCase().includes('rcl-h') || n.toLowerCase().includes('stock with images')) ?? workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: true });
+
+  let headerIdx = 2;
+  for (let i = 0; i < Math.min(10, rawRows.length); i++) {
+    const rowStr = rawRows[i].map(c => String(c ?? '').toLowerCase()).join('|');
+    if (rowStr.includes('item code') || rowStr.includes('item description') || rowStr.includes('qty')) {
+      headerIdx = i;
+      break;
+    }
+  }
+
+  const headers = rawRows[headerIdx] ?? [];
+  const colCode = findColIdxServer(headers, 'Item Code', 'Material Number', 'Material', 'Item');
+  const colSub  = findColIdxServer(headers, 'Sub', 'Item Category', 'Category');
+  const colDesc = findColIdxServer(headers, 'Item Description', 'Description', 'Material Description');
+  const colQty  = findColIdxServer(headers, 'Qty', 'Qty on Hand', 'Quantity');
+  const colUOM  = findColIdxServer(headers, 'UOM', 'Primary Unit Of Measure', 'Unit of Measure');
+  const colCost = findColIdxServer(headers, 'Unit Cost', 'Cost');
+  const colVal  = findColIdxServer(headers, 'Value', 'Value (LKR)', 'Inventory Value', 'Total Value');
+
+  const codeIdx = colCode !== -1 ? colCode : 0;
+  const subIdx  = colSub  !== -1 ? colSub  : 1;
+  const descIdx = colDesc !== -1 ? colDesc : 2;
+  const qtyIdx  = colQty  !== -1 ? colQty  : 3;
+  const uomIdx  = colUOM  !== -1 ? colUOM  : 4;
+  const costIdx = colCost !== -1 ? colCost : 5;
+  const valIdx  = colVal  !== -1 ? colVal  : 6;
+
+  const now = Date.now();
+  const rows = [];
+  let skipped = 0;
+
+  for (let i = headerIdx + 1; i < rawRows.length; i++) {
+    const row = rawRows[i];
+    if (!row || row.length === 0) { skipped++; continue; }
+
+    const rawCode = String(row[codeIdx] ?? '').trim();
+    if (!rawCode || rawCode === '' || rawCode.toLowerCase() === 'nan' || rawCode.toLowerCase() === 'total' || rawCode.toLowerCase() === 'grand total') {
+      skipped++;
+      continue;
+    }
+
+    const category  = subIdx !== -1 ? (String(row[subIdx] ?? '').trim() || null) : null;
+    const desc      = String(row[descIdx] ?? '').trim() || 'No Description';
+    const qty       = toFloatServer(row[qtyIdx]);
+    const uom       = normalizeUOMServer(String(row[uomIdx] ?? ''));
+    const unitCost  = costIdx !== -1 ? toFloatServer(row[costIdx]) : null;
+    const totVal    = valIdx !== -1 ? toFloatServer(row[valIdx]) : null;
+
+    rows.push({
+      plant_id:        plantId,
+      item_code:       rawCode,
+      description:     desc,
+      category,
+      quantity_on_hand: qty,
+      uom,
+      unit_cost:       unitCost && unitCost > 0 ? unitCost : null,
+      total_value:     totVal && totVal > 0 ? totVal : (unitCost ? unitCost * qty : null),
+      source_system:   'ORACLE',
+      last_synced_at:  now,
+    });
+  }
+
+  return { rows, skipped };
+}
+
+function parseOracle_RCLE_Server(workbook, plantId) {
+  const sheetName = workbook.SheetNames.find(n => /^gs\s/i.test(n.trim()) || n.toLowerCase().includes('rcl-e') || n.toLowerCase().includes('consolidated')) ?? workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: true });
+
+  let headerIdx = 2;
+  for (let i = 0; i < Math.min(10, rawRows.length); i++) {
+    const rowStr = rawRows[i].map(c => String(c ?? '').toLowerCase()).join('|');
+    if (rowStr.includes('item code') && (rowStr.includes('description') || rowStr.includes('organization') || rowStr.includes('quantity'))) {
+      headerIdx = i;
+      break;
+    }
+  }
+
+  const headers = rawRows[headerIdx] ?? [];
+  const colOrg  = findColIdxServer(headers, 'Organization', 'Org', 'Plant');
+  const colCat  = findColIdxServer(headers, 'Item Category', 'Category');
+  const colCode = findColIdxServer(headers, 'Item Code', 'ItemCode', 'Item');
+  const colDesc = findColIdxServer(headers, 'Description', 'Item Description');
+  const colUOM  = findColIdxServer(headers, 'Primary Unit Of Measure', 'UOM', 'Unit of Measure', 'UoM');
+  const colQty  = findColIdxServer(headers, 'Quantity', 'Physical Stock Qty', 'Qty', 'On Hand');
+  const colCost = findColIdxServer(headers, 'Unit Cost', 'Cost');
+  const colVal  = findColIdxServer(headers, 'Inventory Value', 'Value (LKR)', 'Total Value', 'Value');
+
+  const now = Date.now();
+  const rows = [];
+  let skipped = 0;
+
+  for (let i = headerIdx + 1; i < rawRows.length; i++) {
+    const row = rawRows[i];
+    if (!row || row.length === 0) { skipped++; continue; }
+
+    const rawCode = colCode !== -1 ? String(row[colCode] ?? '').trim() : '';
+    if (!rawCode || rawCode === '' || rawCode.toLowerCase() === 'nan' || rawCode.toLowerCase() === 'total' || rawCode.toLowerCase() === 'grand total') {
+      skipped++;
+      continue;
+    }
+
+    const orgRaw        = colOrg !== -1 ? String(row[colOrg] ?? '').trim() : '';
+    const resolvedPlant = resolvePlantIdServer(orgRaw, plantId);
+
+    const category  = colCat  !== -1 ? (String(row[colCat]  ?? '').trim() || null) : null;
+    const desc      = colDesc !== -1 ? (String(row[colDesc] ?? '').trim() || 'No Description') : 'No Description';
+    const uom       = normalizeUOMServer(colUOM !== -1 ? String(row[colUOM] ?? '') : '');
+    const qty       = toFloatServer(colQty !== -1 ? row[colQty] : 0);
+    const unitCost  = colCost !== -1 ? toFloatServer(row[colCost]) : null;
+    const totVal    = colVal  !== -1 ? toFloatServer(row[colVal])  : null;
 
     rows.push({
       plant_id:        resolvedPlant,
-      item_code:       rawItemCode,
-      description:     colDesc !== -1 ? (String(row[colDesc] ?? '').trim() || 'No Description') : 'No Description',
-      category:        colCat  !== -1 ? (String(row[colCat]  ?? '').trim() || null) : null,
-      quantity_on_hand: toFloatServer(colQty !== -1 ? row[colQty] : 0),
-      uom:             normalizeUOMServer(colUOM !== -1 ? String(row[colUOM] ?? '') : ''),
-      unit_cost:       (unitCostRaw !== null && unitCostRaw > 0) ? unitCostRaw : null,
-      total_value:     (totalValRaw !== null && totalValRaw > 0) ? totalValRaw : null,
+      item_code:       rawCode,
+      description:     desc,
+      category,
+      quantity_on_hand: qty,
+      uom,
+      unit_cost:       unitCost && unitCost > 0 ? unitCost : null,
+      total_value:     totVal && totVal > 0 ? totVal : (unitCost ? unitCost * qty : null),
       source_system:   'ORACLE',
       last_synced_at:  now,
     });
@@ -1433,10 +1614,8 @@ function parseOracleInventoryServer(workbook, plantId) {
 
 /**
  * Maps a CanonicalInventoryRow → existing SparePart document shape
- * so all writes land in the standard inventory collection/db.json.
  */
 function canonicalToSparePart(row, performerUsername, now) {
-  // Build composite ID identical to existing pattern
   const safeId = `${row.plant_id}-${row.item_code}`.replace(/[^a-zA-Z0-9\-_.]/g, '-');
   return {
     id:             safeId,
@@ -1467,37 +1646,31 @@ app.post(['/api/inventory/sync-upload'], upload.single('file'), async (req, res)
     return res.status(400).json({ status: 'error', message: 'No file uploaded.' });
   }
 
-  const plantId          = (req.body.plantId || '').trim();
+  const rawPlant          = (req.body.plantId || '').trim();
   const performerUsername = (req.body.username || 'unknown').trim();
 
-  if (!plantId) {
+  if (!rawPlant) {
     return res.status(400).json({ status: 'error', message: 'plantId is required.' });
   }
 
   try {
-    // ----- 1. Parse workbook -----
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const format   = detectInventoryFormat(workbook);
+    const workbook  = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const detection = detectInventoryFormatServer(workbook, rawPlant);
+    const plantId   = resolvePlantIdServer(rawPlant, detection.plantId);
 
-    if (format === 'UNKNOWN') {
-      return res.status(422).json({
-        status: 'error',
-        message: 'Unrecognised file format. Expected an SAP "Current Inventory Status" or Oracle "GS ..." inventory export.',
-      });
-    }
-
-    let parsedRows = [];
-    let skippedRows = 0;
-
-    if (format === 'SAP') {
-      const result = parseSAPInventoryServer(workbook, plantId);
-      parsedRows   = result.rows;
-      skippedRows  = result.skipped;
+    let result;
+    if (detection.schemaType === 'SAP_LWT' || (detection.format === 'SAP' && plantId === 'Lanka Wall Tiles')) {
+      result = parseSAP_LWT_Server(workbook, plantId);
+    } else if (detection.schemaType === 'ORACLE_RCLH' || (detection.format === 'ORACLE' && plantId === 'Rocell Horana')) {
+      result = parseOracle_RCLH_Server(workbook, plantId);
+    } else if (detection.schemaType === 'ORACLE_RCLE' || (detection.format === 'ORACLE' && plantId === 'Rocell Eheliyagoda')) {
+      result = parseOracle_RCLE_Server(workbook, plantId);
     } else {
-      const result = parseOracleInventoryServer(workbook, plantId);
-      parsedRows   = result.rows;
-      skippedRows  = result.skipped;
+      result = parseSAP_LT_Server(workbook, plantId);
     }
+
+    const parsedRows  = result.rows;
+    const skippedRows = result.skipped;
 
     if (parsedRows.length === 0) {
       return res.status(400).json({
@@ -1507,7 +1680,6 @@ app.post(['/api/inventory/sync-upload'], upload.single('file'), async (req, res)
       });
     }
 
-    // ----- 2. Load existing db.json -----
     const dbJsonPath = path.join(process.cwd(), 'db.json');
     let localData = [];
     if (fs.existsSync(dbJsonPath)) {
@@ -1520,26 +1692,23 @@ app.post(['/api/inventory/sync-upload'], upload.single('file'), async (req, res)
       }
     }
 
-    // Build lookup map: id → index in localData
     const idIndexMap = new Map();
     localData.forEach((p, idx) => {
       if (p.id) idIndexMap.set(p.id, idx);
     });
 
-    // ----- 3. Transactional upsert -----
     const now = Date.now();
     let itemsUpdated  = 0;
     let newItemsAdded = 0;
     const previousState = {};
     const updatedState  = {};
-    const firestoreOps  = []; // collect docs for Firestore batch
+    const firestoreOps  = [];
 
     for (const row of parsedRows) {
       const sparePart = canonicalToSparePart(row, performerUsername, now);
       const partId    = sparePart.id;
 
       if (idIndexMap.has(partId)) {
-        // UPDATE — merge into existing record, preserve fields not in the export
         const existingIdx  = idIndexMap.get(partId);
         const existingData = localData[existingIdx];
 
@@ -1550,7 +1719,6 @@ app.post(['/api/inventory/sync-upload'], upload.single('file'), async (req, res)
 
         const merged = {
           ...existingData,
-          // Fields to overwrite from the export
           onHand:             sparePart.onHand,
           description:        sparePart.description,
           uom:                sparePart.uom,
@@ -1571,7 +1739,6 @@ app.post(['/api/inventory/sync-upload'], upload.single('file'), async (req, res)
         firestoreOps.push(merged);
         itemsUpdated++;
       } else {
-        // INSERT — new catalog item
         previousState[partId] = { isNew: true };
         updatedState[partId]  = { onHand: sparePart.onHand, totalValue: sparePart.totalValue };
         localData.push(sparePart);
@@ -1581,14 +1748,12 @@ app.post(['/api/inventory/sync-upload'], upload.single('file'), async (req, res)
       }
     }
 
-    // ----- 4. Persist db.json (single atomic write) -----
     fs.writeFileSync(dbJsonPath, JSON.stringify(localData, null, 2), 'utf8');
-    console.log(`[Sync Upload] db.json updated — updated: ${itemsUpdated}, added: ${newItemsAdded}, skipped: ${skippedRows}`);
+    console.log(`[Sync Upload] db.json updated for ${plantId} — updated: ${itemsUpdated}, added: ${newItemsAdded}, skipped: ${skippedRows}`);
 
-    // ----- 5. Firestore batch sync -----
     if (firestoreDb && firestoreOps.length > 0) {
       try {
-        const BATCH_SIZE = 400;
+        const BATCH_SIZE = 500;
         for (let i = 0; i < firestoreOps.length; i += BATCH_SIZE) {
           const chunk = firestoreOps.slice(i, i + BATCH_SIZE);
           const batch = firestoreDb.batch();
@@ -1604,59 +1769,20 @@ app.post(['/api/inventory/sync-upload'], upload.single('file'), async (req, res)
       }
     }
 
-    // ----- 6. Audit trail -----
-    const auditDetails = `[${format}] Inventory sync for ${plantId}: ${newItemsAdded} added, ${itemsUpdated} updated, ${skippedRows} skipped`;
-    if (firestoreDb) {
-      try {
-        const logRef = firestoreDb.collection('audit_logs').doc();
-        await logRef.set({
-          user_id:     performerUsername,
-          user_name:   performerUsername,
-          plant_id:    plantId,
-          plant_name:  plantId,
-          action:      'UPLOAD',
-          entity_type: 'inventory',
-          entity_id:   plantId,
-          changes:     JSON.stringify({ source: format, added: newItemsAdded, updated: itemsUpdated }),
-          created_at:  now,
-          details:     auditDetails,
-        });
-
-        // Upload history record
-        const historyId  = `sync-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-        const historyRef = firestoreDb.collection('upload_history').doc(historyId);
-        await historyRef.set({
-          id:            historyId,
-          timestamp:     now,
-          uploadedBy:    performerUsername,
-          fileName:      req.file.originalname,
-          factoryId:     plantId,
-          reportType:    `${format}_INVENTORY_SYNC`,
-          previousState: JSON.stringify(previousState),
-          updatedState:  JSON.stringify(updatedState),
-        });
-      } catch (auditErr) {
-        console.warn('[Sync Upload] Audit logging failed (non-fatal):', auditErr.message);
-      }
-    }
-
-    // ----- 7. Return ingestion summary -----
-    const summary = {
-      status:         'success',
-      source:         format,
-      plant:          plantId,
+    res.json({
+      status: 'success',
+      source: detection.format,
+      plant: plantId,
       total_rows_read: parsedRows.length + skippedRows,
-      items_updated:  itemsUpdated,
+      items_updated: itemsUpdated,
       new_items_added: newItemsAdded,
-      skipped_rows:   skippedRows,
-    };
-
-    console.log('[Sync Upload] Complete:', JSON.stringify(summary));
-    return res.json(summary);
+      skipped_rows: skippedRows,
+      message: `Successfully synced ${parsedRows.length} items for ${plantId} (${newItemsAdded} new added, ${itemsUpdated} updated, ${skippedRows} skipped).`
+    });
 
   } catch (err) {
-    console.error('[Sync Upload] Critical error:', err);
-    return res.status(500).json({ status: 'error', message: `Internal server error: ${err.message}` });
+    console.error('[Sync Upload API Error]:', err);
+    res.status(500).json({ status: 'error', message: err.message });
   }
 });
 

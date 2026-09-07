@@ -1,16 +1,12 @@
 /**
  * inventorySyncService.ts
  *
- * Client-side (and Node-compatible) Excel format detector and parser for
- * SAP LT/LWT inventory exports and Oracle RCL-E/RCL-H inventory reports.
- *
- * Exports:
- *   - CanonicalInventoryRow  — normalized schema produced by both parsers
- *   - IngestionSummary       — response shape returned by the server sync API
- *   - detectFormat()         — inspects workbook to identify SAP vs Oracle
- *   - parseSAPInventory()    — parses SAP " Current Inventory Status " sheet
- *   - parseOracleInventory() — parses Oracle "GS ..." sheet
- *   - parseInventoryFile()   — top-level dispatcher (detect + parse)
+ * Client-side and Node-compatible Excel format detector and parser for
+ * all 4 plant export schemas:
+ *   1. Lanka Tiles (LT) [SAP Report]
+ *   2. Lanka Wall Tiles (LWT) [SAP Report]
+ *   3. Rocell Horana (RCL-H) [Oracle Report]
+ *   4. Rocell Eheliyagoda (RCL-E) [Oracle Report]
  */
 
 import * as XLSX from 'xlsx';
@@ -19,22 +15,24 @@ import * as XLSX from 'xlsx';
 // Canonical Row Schema
 // ---------------------------------------------------------------------------
 
+export type PlantId = 'Lanka Tiles' | 'Lanka Wall Tiles' | 'Rocell Horana' | 'Rocell Eheliyagoda';
+
 export interface CanonicalInventoryRow {
   /** Composite DB key segment — plant affiliation */
-  plant_id: string;
+  plant_id: PlantId | string;
   /** Primary item identifier (SAP: Material Number, Oracle: Item Code) */
   item_code: string;
   /** Human-readable description */
   description: string;
-  /** Item category (Oracle "Item Category"; null for SAP) */
+  /** Item category (Oracle "Item Category" / "Sub"; null for SAP) */
   category: string | null;
   /** Current on-hand quantity */
   quantity_on_hand: number;
   /** Standardised unit-of-measure, always UPPERCASE e.g. "EACH", "KG" */
   uom: string;
-  /** Unit cost — populated from Oracle; null for SAP (SAP doesn't export cost) */
+  /** Unit cost — populated from Oracle / LWT if present */
   unit_cost: number | null;
-  /** Total inventory value — Oracle only */
+  /** Total inventory value — Oracle / LWT if present */
   total_value: number | null;
   /** SAP material description legacy code — metadata only */
   legacy_item_code?: string;
@@ -64,20 +62,22 @@ export interface IngestionSummary {
 // ---------------------------------------------------------------------------
 
 /**
- * Normalises a raw UOM string to UPPERCASE.
- * Maps common abbreviations to canonical forms.
+ * Normalises raw UOM string to UPPERCASE canonical form.
  */
-function normalizeUOM(raw: string | undefined | null): string {
+export function normalizeUOM(raw: string | undefined | null): string {
   if (!raw) return 'EACH';
   const s = String(raw).trim().toUpperCase();
   const MAP: Record<string, string> = {
     EA: 'EACH',
-    'EACH': 'EACH',
+    EACH: 'EACH',
+    EACHES: 'EACH',
     PC: 'PIECE',
     PCS: 'PIECE',
     PIECE: 'PIECE',
+    PIECES: 'PIECE',
     KG: 'KG',
     KGS: 'KG',
+    KILOGRAM: 'KG',
     LT: 'LITRE',
     LTR: 'LITRE',
     LITRE: 'LITRE',
@@ -88,6 +88,7 @@ function normalizeUOM(raw: string | undefined | null): string {
     METER: 'METRE',
     NOS: 'NOS',
     NO: 'NOS',
+    NUM: 'NOS',
     SET: 'SET',
     SETS: 'SET',
     BOX: 'BOX',
@@ -98,38 +99,45 @@ function normalizeUOM(raw: string | undefined | null): string {
     FT: 'FEET',
     IN: 'INCH',
     L: 'LITRE',
+    PAIR: 'PAIR',
+    PAIRS: 'PAIR',
+    CAN: 'CAN',
+    BTL: 'BOTTLE',
+    BOTTLE: 'BOTTLE',
   };
   return MAP[s] ?? s;
 }
 
 /**
- * Safely converts any cell value to a float.
- * Returns 0 if the value is blank, null, undefined, or non-numeric.
+ * Safely converts any cell value to a float. Default 0 if invalid or negative.
  */
-function toFloat(val: any): number {
+export function toFloat(val: any): number {
   if (val === null || val === undefined || val === '') return 0;
-  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (typeof val === 'number') {
+    if (isNaN(val) || val < 0) return 0;
+    return val;
+  }
   const cleaned = String(val).replace(/[^0-9.\-]/g, '');
   const parsed = parseFloat(cleaned);
-  return isNaN(parsed) ? 0 : parsed;
+  if (isNaN(parsed) || parsed < 0) return 0;
+  return parsed;
 }
 
 /**
  * Strips leading zeros from a string that is entirely numeric.
- * e.g. "000100201" → "100201".  "SE.001.000007" remains unchanged.
  */
-function stripLeadingZeros(s: string): string {
-  if (/^\d+$/.test(s)) {
-    return String(parseInt(s, 10));
+export function stripLeadingZeros(s: string): string {
+  const trimmed = String(s ?? '').trim();
+  if (/^\d+$/.test(trimmed)) {
+    return String(parseInt(trimmed, 10));
   }
-  return s;
+  return trimmed;
 }
 
 /**
- * Finds the index of a column header in a header row,
- * using case-insensitive, trimmed matching.
+ * Case-insensitive search for header column index.
  */
-function findColIndex(headers: any[], ...candidates: string[]): number {
+export function findColIndex(headers: any[], ...candidates: string[]): number {
   const lowers = candidates.map(c => c.toLowerCase().trim());
   return headers.findIndex(h => {
     const hs = String(h ?? '').toLowerCase().trim();
@@ -137,119 +145,150 @@ function findColIndex(headers: any[], ...candidates: string[]): number {
   });
 }
 
+/**
+ * Normalises raw plant name input to canonical PlantId
+ */
+export function resolvePlantId(rawName: string | undefined | null, fallback: string = 'Lanka Tiles'): PlantId {
+  if (!rawName) return fallback as PlantId;
+  const s = rawName.trim().toLowerCase();
+  if (s.includes('lanka') && s.includes('wall')) return 'Lanka Wall Tiles';
+  if (s.includes('lanka') && (s.includes('tile') || s.includes('lt'))) return 'Lanka Tiles';
+  if (s.includes('horana') || s.includes('rcl-h') || s.includes('rclh')) return 'Rocell Horana';
+  if (s.includes('eheliyagoda') || s.includes('rcl-e') || s.includes('rcle') || s === 'gsc') return 'Rocell Eheliyagoda';
+  return (fallback || 'Lanka Tiles') as PlantId;
+}
+
 // ---------------------------------------------------------------------------
-// Format Detection
+// Format Detection & Auto-Detection
 // ---------------------------------------------------------------------------
 
 export type DetectedFormat = 'SAP' | 'ORACLE' | 'UNKNOWN';
 
+export interface DetectionResult {
+  format: DetectedFormat;
+  plantId: PlantId;
+  schemaType: 'SAP_LT' | 'SAP_LWT' | 'ORACLE_RCLH' | 'ORACLE_RCLE' | 'UNKNOWN';
+}
+
 /**
- * Inspects an XLSX Workbook to determine whether it is a SAP or Oracle export.
+ * Inspects the workbook (first 5-10 rows) and auto-detects plant & format.
  *
- * SAP signals:
- *   - Sheet name contains "Current Inventory Status" (with or without spaces)
- *   - OR column headers on the first data sheet include "Sum of Unrestricted"
- *
- * Oracle signals:
- *   - Sheet name matches /GS /i (e.g. "GS June 2026")
- *   - OR column headers include "Organization" AND "Item Code"
+ * Rules:
+ *   - "Closing Stock" and "BUn" -> LWT (SAP)
+ *   - "Sum of Unrestricted" -> LT (SAP)
+ *   - "Item Description" and "Qty" (or "Sub") without "Organization" -> RCL-H (Oracle)
+ *   - "Item Category" and "Organization" -> RCL-E (Oracle)
+ *   - Fallback to fallbackPlant if ambiguous.
  */
-export function detectFormat(workbook: XLSX.WorkBook): DetectedFormat {
+export function detectPlantAndFormat(workbook: XLSX.WorkBook, fallbackPlant: string = 'Lanka Tiles'): DetectionResult {
   const sheetNames = workbook.SheetNames;
+  const resolvedFallback = resolvePlantId(fallbackPlant, 'Lanka Tiles');
 
-  // --- SAP: sheet name check ---
-  const sapSheetName = sheetNames.find(n =>
-    n.replace(/\s+/g, ' ').trim().toLowerCase().includes('current inventory status')
-  );
-  if (sapSheetName) return 'SAP';
+  // Check all sheet names first
+  for (const name of sheetNames) {
+    const cleanName = name.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (cleanName.includes('current inventory status')) {
+      return { format: 'SAP', plantId: 'Lanka Tiles', schemaType: 'SAP_LT' };
+    }
+    if (cleanName.includes('spare parts') && !cleanName.includes('rcl')) {
+      return { format: 'SAP', plantId: 'Lanka Wall Tiles', schemaType: 'SAP_LWT' };
+    }
+    if (/^gs\s/i.test(name.trim())) {
+      return { format: 'ORACLE', plantId: 'Rocell Eheliyagoda', schemaType: 'ORACLE_RCLE' };
+    }
+  }
 
-  // --- Oracle: sheet name check ---
-  const oracleSheetName = sheetNames.find(n =>
-    /^gs\s/i.test(n.trim())
-  );
-  if (oracleSheetName) return 'ORACLE';
-
-  // --- Header-based fallback detection on first sheet ---
+  // Inspect first sheet headers up to 10 rows
   const firstSheetName = sheetNames[0];
-  if (!firstSheetName) return 'UNKNOWN';
+  if (!firstSheetName) {
+    return { format: 'UNKNOWN', plantId: resolvedFallback, schemaType: 'UNKNOWN' };
+  }
 
   const sheet = workbook.Sheets[firstSheetName];
-  // Read the first 10 rows as raw arrays to inspect headers
   const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][];
 
   for (let i = 0; i < Math.min(10, rawRows.length); i++) {
-    const rowStr = rawRows[i].map((c: any) => String(c ?? '').toLowerCase()).join('|');
-    if (rowStr.includes('sum of unrestricted')) return 'SAP';
-    if (rowStr.includes('organization') && rowStr.includes('item code')) return 'ORACLE';
+    const rowStr = rawRows[i].map(c => String(c ?? '').toLowerCase()).join('|');
+
+    // 1. LWT: "Closing Stock" and "BUn"
+    if (rowStr.includes('closing stock') && (rowStr.includes('bun') || rowStr.includes('avg rate'))) {
+      return { format: 'SAP', plantId: 'Lanka Wall Tiles', schemaType: 'SAP_LWT' };
+    }
+
+    // 2. LT: "Sum of Unrestricted"
+    if (rowStr.includes('sum of unrestricted') || rowStr.includes('qty (unrestricted)')) {
+      return { format: 'SAP', plantId: 'Lanka Tiles', schemaType: 'SAP_LT' };
+    }
+
+    // 3. RCL-E: "Item Category" and "Organization"
+    if (rowStr.includes('organization') && (rowStr.includes('item category') || rowStr.includes('primary unit of measure'))) {
+      return { format: 'ORACLE', plantId: 'Rocell Eheliyagoda', schemaType: 'ORACLE_RCLE' };
+    }
+
+    // 4. RCL-H: "Item Description" and "Qty" / "Sub" (without Organization)
+    if (
+      rowStr.includes('item description') &&
+      (rowStr.includes('qty') || rowStr.includes('unit cost') || rowStr.includes('sub')) &&
+      !rowStr.includes('organization')
+    ) {
+      return { format: 'ORACLE', plantId: 'Rocell Horana', schemaType: 'ORACLE_RCLH' };
+    }
   }
 
-  return 'UNKNOWN';
+  // Header fallback based on selected plant
+  if (resolvedFallback === 'Lanka Wall Tiles') {
+    return { format: 'SAP', plantId: 'Lanka Wall Tiles', schemaType: 'SAP_LWT' };
+  } else if (resolvedFallback === 'Rocell Horana') {
+    return { format: 'ORACLE', plantId: 'Rocell Horana', schemaType: 'ORACLE_RCLH' };
+  } else if (resolvedFallback === 'Rocell Eheliyagoda') {
+    return { format: 'ORACLE', plantId: 'Rocell Eheliyagoda', schemaType: 'ORACLE_RCLE' };
+  }
+
+  return { format: 'SAP', plantId: 'Lanka Tiles', schemaType: 'SAP_LT' };
+}
+
+export function detectFormat(workbook: XLSX.WorkBook): DetectedFormat {
+  return detectPlantAndFormat(workbook).format;
 }
 
 // ---------------------------------------------------------------------------
-// SAP Parser
+// 1. Lanka Tiles (LT) SAP Parser
 // ---------------------------------------------------------------------------
 
-/**
- * Parses a SAP " Current Inventory Status " export.
- *
- * Sheet layout:
- *   Row 1–2 : metadata / blank (skipped)
- *   Row 3   : Header row
- *   Row 4+  : Data rows
- *
- *   Col B → Material Number   → item_code
- *   Col C → Old material number → legacy_item_code
- *   Col D → Material Description → description
- *   Col E → Base Unit of Measure → uom
- *   Col F → Sum of Unrestricted → quantity_on_hand
- */
-export function parseSAPInventory(
+export function parseSAP_LT(
   workbook: XLSX.WorkBook,
-  plantId: string
+  plantId: PlantId = 'Lanka Tiles'
 ): { rows: CanonicalInventoryRow[]; skipped: number } {
-  // Prefer named sheet, fall back to index 0
   const sheetName =
     workbook.SheetNames.find(n =>
       n.replace(/\s+/g, ' ').trim().toLowerCase().includes('current inventory status')
     ) ?? workbook.SheetNames[0];
 
   const sheet = workbook.Sheets[sheetName];
-  // Read everything as raw arrays (header:1) so we can control the header row
-  const rawRows = XLSX.utils.sheet_to_json(sheet, {
-    header: 1,
-    defval: '',
-    blankrows: true,
-  }) as any[][];
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: true }) as any[][];
 
-  // Header is at row index 2 (0-based = row 3 in spreadsheet)
-  const HEADER_ROW_INDEX = 2;
-
-  // Find actual header row by scanning for "Material Number" or "Sum of Unrestricted"
-  let headerIdx = HEADER_ROW_INDEX;
+  let headerIdx = 2; // Default Row 3 (Index 2)
   for (let i = 0; i < Math.min(10, rawRows.length); i++) {
-    const rowStr = rawRows[i].map((c: any) => String(c ?? '').toLowerCase()).join('|');
-    if (rowStr.includes('material number') || rowStr.includes('sum of unrestricted')) {
+    const rowStr = rawRows[i].map(c => String(c ?? '').toLowerCase()).join('|');
+    if (rowStr.includes('material number') || rowStr.includes('sum of unrestricted') || rowStr.includes('material description')) {
       headerIdx = i;
       break;
     }
   }
 
   const headers: any[] = rawRows[headerIdx] ?? [];
+  const colMatNum = findColIndex(headers, 'Material Number', 'Material No', 'Material', 'Item Code');
+  const colOldMat = findColIndex(headers, 'Old material number', 'Old Material', 'Old Mat No');
+  const colDesc   = findColIndex(headers, 'Material Description', 'Description');
+  const colUOM    = findColIndex(headers, 'Base Unit of Measure', 'UoM', 'Unit of Measure', 'UOM');
+  const colQty    = findColIndex(headers, 'Sum of Unrestricted', 'Unrestricted', 'Qty on Hand', 'Stock Qty', 'Quantity', 'Qty');
+  const colValue  = findColIndex(headers, 'Value (LKR)', 'Value', 'Total Value');
 
-  // Map column names to indices
-  const colMatNum   = findColIndex(headers, 'Material Number', 'Material No', 'Material');
-  const colOldMat   = findColIndex(headers, 'Old material number', 'Old Material', 'Old Mat No');
-  const colDesc     = findColIndex(headers, 'Material Description', 'Description');
-  const colUOM      = findColIndex(headers, 'Base Unit of Measure', 'UoM', 'Unit of Measure', 'UOM');
-  const colQty      = findColIndex(headers, 'Sum of Unrestricted', 'Unrestricted', 'Stock Qty', 'Quantity');
-
-  // If mandatory columns cannot be found, use positional fallback (B=1, C=2, D=3, E=4, F=5)
-  const matNumIdx   = colMatNum  !== -1 ? colMatNum  : 1;
-  const oldMatIdx   = colOldMat  !== -1 ? colOldMat  : 2;
-  const descIdx     = colDesc    !== -1 ? colDesc    : 3;
-  const uomIdx      = colUOM     !== -1 ? colUOM     : 4;
-  const qtyIdx      = colQty     !== -1 ? colQty     : 5;
+  const matNumIdx = colMatNum !== -1 ? colMatNum : 1;
+  const oldMatIdx = colOldMat !== -1 ? colOldMat : 2;
+  const descIdx   = colDesc   !== -1 ? colDesc   : 3;
+  const uomIdx    = colUOM    !== -1 ? colUOM    : 4;
+  const qtyIdx    = colQty    !== -1 ? colQty    : 5;
 
   const now = Date.now();
   const rows: CanonicalInventoryRow[] = [];
@@ -260,16 +299,17 @@ export function parseSAPInventory(
     if (!row || row.length === 0) { skipped++; continue; }
 
     const rawMatNum = String(row[matNumIdx] ?? '').trim();
-    if (!rawMatNum || rawMatNum === '' || rawMatNum.toLowerCase() === 'total' || rawMatNum.toLowerCase() === 'grand total') {
+    if (!rawMatNum || rawMatNum === '' || rawMatNum.toLowerCase() === 'total' || rawMatNum.toLowerCase() === 'grand total' || rawMatNum.toLowerCase() === 'nan') {
       skipped++;
       continue;
     }
 
     const itemCode   = stripLeadingZeros(rawMatNum);
-    const legacyCode = String(row[oldMatIdx] ?? '').trim() || undefined;
-    const desc       = String(row[descIdx]   ?? '').trim() || 'No Description';
-    const uom        = normalizeUOM(String(row[uomIdx]  ?? ''));
+    const legacyCode = oldMatIdx !== -1 ? (String(row[oldMatIdx] ?? '').trim() || undefined) : undefined;
+    const desc       = String(row[descIdx] ?? '').trim() || 'No Description';
+    const uom        = normalizeUOM(String(row[uomIdx] ?? ''));
     const qty        = toFloat(row[qtyIdx]);
+    const totalVal   = colValue !== -1 ? toFloat(row[colValue]) : null;
 
     rows.push({
       plant_id:        plantId,
@@ -279,7 +319,7 @@ export function parseSAPInventory(
       quantity_on_hand: qty,
       uom,
       unit_cost:       null,
-      total_value:     null,
+      total_value:     totalVal && totalVal > 0 ? totalVal : null,
       ...(legacyCode ? { legacy_item_code: legacyCode } : {}),
       source_system:   'SAP',
       last_synced_at:  now,
@@ -290,64 +330,45 @@ export function parseSAPInventory(
 }
 
 // ---------------------------------------------------------------------------
-// Oracle Parser
+// 2. Lanka Wall Tiles (LWT) SAP Parser
 // ---------------------------------------------------------------------------
 
-/**
- * Parses an Oracle "GS June 2026" style inventory export.
- *
- * Sheet layout:
- *   Row 1   : Report metadata title
- *   Row 2   : Blank or secondary title
- *   Row 3   : Header row
- *   Row 4+  : Data rows
- *   Last row: Grand Total summary (Item Code is NaN/empty → skipped)
- *
- *   "Organization"              → plant_code (overrides plantId if present)
- *   "Item Category"             → category
- *   "Item Code"                 → item_code
- *   "Description"               → description
- *   "Primary Unit Of Measure"   → uom
- *   "Quantity"                  → quantity_on_hand
- *   "Unit Cost"                 → unit_cost
- *   "Inventory Value"           → total_value
- */
-export function parseOracleInventory(
+export function parseSAP_LWT(
   workbook: XLSX.WorkBook,
-  plantId: string
+  plantId: PlantId = 'Lanka Wall Tiles'
 ): { rows: CanonicalInventoryRow[]; skipped: number } {
-  // Prefer "GS ..." sheet, fall back to index 0
   const sheetName =
-    workbook.SheetNames.find(n => /^gs\s/i.test(n.trim())) ??
-    workbook.SheetNames[0];
+    workbook.SheetNames.find(n =>
+      n.toLowerCase().includes('spare parts') || n.toLowerCase().includes('stock with images') || n.toLowerCase().includes('lwt')
+    ) ?? workbook.SheetNames[0];
 
   const sheet = workbook.Sheets[sheetName];
-  const rawRows = XLSX.utils.sheet_to_json(sheet, {
-    header: 1,
-    defval: '',
-    blankrows: true,
-  }) as any[][];
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: true }) as any[][];
 
-  // Header is at row index 2 (0-based = row 3)
-  let headerIdx = 2;
+  // Header is usually at Row 4 (Index 3; skip first 3 title/empty rows)
+  let headerIdx = 3;
   for (let i = 0; i < Math.min(10, rawRows.length); i++) {
-    const rowStr = rawRows[i].map((c: any) => String(c ?? '').toLowerCase()).join('|');
-    if (rowStr.includes('item code') && rowStr.includes('description')) {
+    const rowStr = rawRows[i].map(c => String(c ?? '').toLowerCase()).join('|');
+    if (rowStr.includes('material') || rowStr.includes('closing stock') || rowStr.includes('description')) {
       headerIdx = i;
       break;
     }
   }
 
   const headers: any[] = rawRows[headerIdx] ?? [];
+  const colMat   = findColIndex(headers, 'Material', 'Material Number', 'Material No', 'Item Code');
+  const colDesc  = findColIndex(headers, 'Material Description', 'Description');
+  const colStock = findColIndex(headers, 'Closing Stock', 'Qty on Hand', 'Qty (Closing Stock)', 'Qty', 'Quantity');
+  const colBUn   = findColIndex(headers, 'BUn', 'UOM', 'Base Unit of Measure', 'Unit of Measure');
+  const colRate  = findColIndex(headers, 'Avg Rate.', 'Avg Rate', 'Unit Cost', 'Price');
+  const colValue = findColIndex(headers, 'Closing Value', 'Value (LKR)', 'Total Value', 'Value');
 
-  const colOrg      = findColIndex(headers, 'Organization', 'Org', 'Plant');
-  const colCat      = findColIndex(headers, 'Item Category', 'Category');
-  const colItemCode = findColIndex(headers, 'Item Code', 'ItemCode', 'Item');
-  const colDesc     = findColIndex(headers, 'Description', 'Item Description');
-  const colUOM      = findColIndex(headers, 'Primary Unit Of Measure', 'UOM', 'Unit of Measure', 'UoM');
-  const colQty      = findColIndex(headers, 'Quantity', 'On Hand Quantity', 'Qty');
-  const colCost     = findColIndex(headers, 'Unit Cost', 'Unit Price', 'Cost');
-  const colValue    = findColIndex(headers, 'Inventory Value', 'Total Value', 'Value');
+  const matIdx   = colMat   !== -1 ? colMat   : 1; // Col B
+  const descIdx  = colDesc  !== -1 ? colDesc  : 2; // Col C
+  const stockIdx = colStock !== -1 ? colStock : 3; // Col D
+  const bunIdx   = colBUn   !== -1 ? colBUn   : 4; // Col E
+  const valueIdx = colValue !== -1 ? colValue : 5; // Col F
+  const rateIdx  = colRate  !== -1 ? colRate  : 7; // Col H
 
   const now = Date.now();
   const rows: CanonicalInventoryRow[] = [];
@@ -357,40 +378,115 @@ export function parseOracleInventory(
     const row = rawRows[i];
     if (!row || row.length === 0) { skipped++; continue; }
 
-    // Item Code must be a non-empty, non-NaN value
-    const rawItemCode = row[colItemCode] ?? '';
-    const itemCodeStr = String(rawItemCode).trim();
+    const rawMatNum = String(row[matIdx] ?? '').trim();
+    if (!rawMatNum || rawMatNum === '' || rawMatNum.toLowerCase() === 'total' || rawMatNum.toLowerCase() === 'grand total' || rawMatNum.toLowerCase() === 'nan') {
+      skipped++;
+      continue;
+    }
+
+    const itemCode = stripLeadingZeros(rawMatNum);
+    const desc     = String(row[descIdx] ?? '').trim() || 'No Description';
+    const qty      = toFloat(row[stockIdx]);
+    const uom      = normalizeUOM(String(row[bunIdx] ?? ''));
+    const unitCost = colRate !== -1 ? toFloat(row[rateIdx]) : null;
+    const totVal   = colValue !== -1 ? toFloat(row[valueIdx]) : null;
+
+    rows.push({
+      plant_id:        plantId,
+      item_code:       itemCode,
+      description:     desc,
+      category:        null,
+      quantity_on_hand: qty,
+      uom,
+      unit_cost:       unitCost && unitCost > 0 ? unitCost : null,
+      total_value:     totVal && totVal > 0 ? totVal : (unitCost ? unitCost * qty : null),
+      source_system:   'SAP',
+      last_synced_at:  now,
+    });
+  }
+
+  return { rows, skipped };
+}
+
+// ---------------------------------------------------------------------------
+// 3. Rocell Horana (RCL-H) Oracle Parser
+// ---------------------------------------------------------------------------
+
+export function parseOracle_RCLH(
+  workbook: XLSX.WorkBook,
+  plantId: PlantId = 'Rocell Horana'
+): { rows: CanonicalInventoryRow[]; skipped: number } {
+  const sheetName =
+    workbook.SheetNames.find(n =>
+      n.toLowerCase().includes('sheet1') || n.toLowerCase().includes('rcl-h') || n.toLowerCase().includes('stock with images')
+    ) ?? workbook.SheetNames[0];
+
+  const sheet = workbook.Sheets[sheetName];
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: true }) as any[][];
+
+  // Header Row: Row 3 (Index 2; skip first 2 title/empty rows)
+  let headerIdx = 2;
+  for (let i = 0; i < Math.min(10, rawRows.length); i++) {
+    const rowStr = rawRows[i].map(c => String(c ?? '').toLowerCase()).join('|');
+    if (rowStr.includes('item code') || rowStr.includes('item description') || rowStr.includes('qty')) {
+      headerIdx = i;
+      break;
+    }
+  }
+
+  const headers: any[] = rawRows[headerIdx] ?? [];
+  const colCode = findColIndex(headers, 'Item Code', 'Material Number', 'Material', 'Item');
+  const colSub  = findColIndex(headers, 'Sub', 'Item Category', 'Category');
+  const colDesc = findColIndex(headers, 'Item Description', 'Description', 'Material Description');
+  const colQty  = findColIndex(headers, 'Qty', 'Qty on Hand', 'Quantity');
+  const colUOM  = findColIndex(headers, 'UOM', 'Primary Unit Of Measure', 'Unit of Measure');
+  const colCost = findColIndex(headers, 'Unit Cost', 'Cost');
+  const colVal  = findColIndex(headers, 'Value', 'Value (LKR)', 'Inventory Value', 'Total Value');
+
+  const codeIdx = colCode !== -1 ? colCode : 0; // Col A
+  const subIdx  = colSub  !== -1 ? colSub  : 1; // Col B
+  const descIdx = colDesc !== -1 ? colDesc : 2; // Col C
+  const qtyIdx  = colQty  !== -1 ? colQty  : 3; // Col D
+  const uomIdx  = colUOM  !== -1 ? colUOM  : 4; // Col E
+  const costIdx = colCost !== -1 ? colCost : 5; // Col F
+  const valIdx  = colVal  !== -1 ? colVal  : 6; // Col G
+
+  const now = Date.now();
+  const rows: CanonicalInventoryRow[] = [];
+  let skipped = 0;
+
+  for (let i = headerIdx + 1; i < rawRows.length; i++) {
+    const row = rawRows[i];
+    if (!row || row.length === 0) { skipped++; continue; }
+
+    const rawCode = String(row[codeIdx] ?? '').trim();
     if (
-      !itemCodeStr ||
-      itemCodeStr === '' ||
-      itemCodeStr.toLowerCase() === 'nan' ||
-      itemCodeStr.toLowerCase() === 'total' ||
-      itemCodeStr.toLowerCase() === 'grand total'
+      !rawCode ||
+      rawCode === '' ||
+      rawCode.toLowerCase() === 'nan' ||
+      rawCode.toLowerCase() === 'total' ||
+      rawCode.toLowerCase() === 'grand total'
     ) {
       skipped++;
       continue;
     }
 
-    // Resolve plant: use Organization column if available, otherwise form param
-    const orgRaw = colOrg !== -1 ? String(row[colOrg] ?? '').trim() : '';
-    const resolvedPlant = orgRaw || plantId;
-
-    const category    = colCat !== -1 ? (String(row[colCat] ?? '').trim() || null) : null;
-    const desc        = colDesc !== -1 ? (String(row[colDesc] ?? '').trim() || 'No Description') : 'No Description';
-    const uom         = normalizeUOM(colUOM !== -1 ? String(row[colUOM] ?? '') : '');
-    const qty         = toFloat(colQty !== -1 ? row[colQty] : 0);
-    const unitCost    = colCost !== -1  ? toFloat(row[colCost])  : null;
-    const totalValue  = colValue !== -1 ? toFloat(row[colValue]) : null;
+    const category  = subIdx !== -1 ? (String(row[subIdx] ?? '').trim() || null) : null;
+    const desc      = String(row[descIdx] ?? '').trim() || 'No Description';
+    const qty       = toFloat(row[qtyIdx]);
+    const uom       = normalizeUOM(String(row[uomIdx] ?? ''));
+    const unitCost  = costIdx !== -1 ? toFloat(row[costIdx]) : null;
+    const totVal    = valIdx !== -1 ? toFloat(row[valIdx]) : null;
 
     rows.push({
-      plant_id:        resolvedPlant,
-      item_code:       itemCodeStr,
+      plant_id:        plantId,
+      item_code:       rawCode,
       description:     desc,
       category,
       quantity_on_hand: qty,
       uom,
-      unit_cost:       unitCost !== null && unitCost === 0 ? null : unitCost,
-      total_value:     totalValue !== null && totalValue === 0 ? null : totalValue,
+      unit_cost:       unitCost && unitCost > 0 ? unitCost : null,
+      total_value:     totVal && totVal > 0 ? totVal : (unitCost ? unitCost * qty : null),
       source_system:   'ORACLE',
       last_synced_at:  now,
     });
@@ -400,23 +496,137 @@ export function parseOracleInventory(
 }
 
 // ---------------------------------------------------------------------------
-// Top-level dispatcher
+// 4. Rocell Eheliyagoda (RCL-E) Oracle Parser
+// ---------------------------------------------------------------------------
+
+export function parseOracle_RCLE(
+  workbook: XLSX.WorkBook,
+  plantId: PlantId = 'Rocell Eheliyagoda'
+): { rows: CanonicalInventoryRow[]; skipped: number } {
+  const sheetName =
+    workbook.SheetNames.find(n =>
+      /^gs\s/i.test(n.trim()) || n.toLowerCase().includes('rcl-e') || n.toLowerCase().includes('consolidated')
+    ) ?? workbook.SheetNames[0];
+
+  const sheet = workbook.Sheets[sheetName];
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: true }) as any[][];
+
+  // Header Row: Row 3 (Index 2)
+  let headerIdx = 2;
+  for (let i = 0; i < Math.min(10, rawRows.length); i++) {
+    const rowStr = rawRows[i].map(c => String(c ?? '').toLowerCase()).join('|');
+    if (rowStr.includes('item code') && (rowStr.includes('description') || rowStr.includes('organization') || rowStr.includes('quantity'))) {
+      headerIdx = i;
+      break;
+    }
+  }
+
+  const headers: any[] = rawRows[headerIdx] ?? [];
+
+  const colOrg  = findColIndex(headers, 'Organization', 'Org', 'Plant');
+  const colCat  = findColIndex(headers, 'Item Category', 'Category');
+  const colCode = findColIndex(headers, 'Item Code', 'ItemCode', 'Item');
+  const colDesc = findColIndex(headers, 'Description', 'Item Description');
+  const colUOM  = findColIndex(headers, 'Primary Unit Of Measure', 'UOM', 'Unit of Measure', 'UoM');
+  const colQty  = findColIndex(headers, 'Quantity', 'Physical Stock Qty', 'Qty', 'On Hand');
+  const colCost = findColIndex(headers, 'Unit Cost', 'Cost');
+  const colVal  = findColIndex(headers, 'Inventory Value', 'Value (LKR)', 'Total Value', 'Value');
+
+  const now = Date.now();
+  const rows: CanonicalInventoryRow[] = [];
+  let skipped = 0;
+
+  for (let i = headerIdx + 1; i < rawRows.length; i++) {
+    const row = rawRows[i];
+    if (!row || row.length === 0) { skipped++; continue; }
+
+    const rawCode = colCode !== -1 ? String(row[colCode] ?? '').trim() : '';
+    if (
+      !rawCode ||
+      rawCode === '' ||
+      rawCode.toLowerCase() === 'nan' ||
+      rawCode.toLowerCase() === 'total' ||
+      rawCode.toLowerCase() === 'grand total'
+    ) {
+      skipped++;
+      continue;
+    }
+
+    const orgRaw          = colOrg !== -1 ? String(row[colOrg] ?? '').trim() : '';
+    const resolvedPlant   = resolvePlantId(orgRaw, plantId);
+
+    const category  = colCat  !== -1 ? (String(row[colCat]  ?? '').trim() || null) : null;
+    const desc      = colDesc !== -1 ? (String(row[colDesc] ?? '').trim() || 'No Description') : 'No Description';
+    const uom       = normalizeUOM(colUOM !== -1 ? String(row[colUOM] ?? '') : '');
+    const qty       = toFloat(colQty !== -1 ? row[colQty] : 0);
+    const unitCost  = colCost !== -1 ? toFloat(row[colCost]) : null;
+    const totVal    = colVal  !== -1 ? toFloat(row[colVal])  : null;
+
+    rows.push({
+      plant_id:        resolvedPlant,
+      item_code:       rawCode,
+      description:     desc,
+      category,
+      quantity_on_hand: qty,
+      uom,
+      unit_cost:       unitCost && unitCost > 0 ? unitCost : null,
+      total_value:     totVal && totVal > 0 ? totVal : (unitCost ? unitCost * qty : null),
+      source_system:   'ORACLE',
+      last_synced_at:  now,
+    });
+  }
+
+  return { rows, skipped };
+}
+
+// ---------------------------------------------------------------------------
+// Top-level Unified Dispatcher
 // ---------------------------------------------------------------------------
 
 export interface ParseInventoryResult {
   format: DetectedFormat;
+  plantId: PlantId;
+  schemaType: string;
   rows: CanonicalInventoryRow[];
   skipped: number;
   totalRowsRead: number;
 }
 
+export function parseInventoryWorkbook(
+  workbook: XLSX.WorkBook,
+  targetPlant: string = 'Lanka Tiles'
+): ParseInventoryResult {
+  const detection = detectPlantAndFormat(workbook, targetPlant);
+  const plantId   = resolvePlantId(targetPlant, detection.plantId);
+
+  let parsed: { rows: CanonicalInventoryRow[]; skipped: number };
+
+  if (detection.schemaType === 'SAP_LWT' || (detection.format === 'SAP' && plantId === 'Lanka Wall Tiles')) {
+    parsed = parseSAP_LWT(workbook, plantId);
+  } else if (detection.schemaType === 'ORACLE_RCLH' || (detection.format === 'ORACLE' && plantId === 'Rocell Horana')) {
+    parsed = parseOracle_RCLH(workbook, plantId);
+  } else if (detection.schemaType === 'ORACLE_RCLE' || (detection.format === 'ORACLE' && plantId === 'Rocell Eheliyagoda')) {
+    parsed = parseOracle_RCLE(workbook, plantId);
+  } else {
+    parsed = parseSAP_LT(workbook, plantId);
+  }
+
+  return {
+    format:        detection.format,
+    plantId,
+    schemaType:    detection.schemaType,
+    rows:          parsed.rows,
+    skipped:       parsed.skipped,
+    totalRowsRead: parsed.rows.length + parsed.skipped,
+  };
+}
+
 /**
- * Detects the ERP format and runs the appropriate parser.
- * Works both in the browser (File → ArrayBuffer) and in Node.js (Buffer).
+ * Reads File buffer and runs unified parser.
  */
 export async function parseInventoryFile(
   file: File,
-  plantId: string
+  targetPlant: string = 'Lanka Tiles'
 ): Promise<ParseInventoryResult> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -425,17 +635,8 @@ export async function parseInventoryFile(
       try {
         const data = e.target?.result;
         const workbook = XLSX.read(data, { type: 'array' });
-        const format = detectFormat(workbook);
-
-        if (format === 'SAP') {
-          const { rows, skipped } = parseSAPInventory(workbook, plantId);
-          resolve({ format, rows, skipped, totalRowsRead: rows.length + skipped });
-        } else if (format === 'ORACLE') {
-          const { rows, skipped } = parseOracleInventory(workbook, plantId);
-          resolve({ format, rows, skipped, totalRowsRead: rows.length + skipped });
-        } else {
-          resolve({ format: 'UNKNOWN', rows: [], skipped: 0, totalRowsRead: 0 });
-        }
+        const res = parseInventoryWorkbook(workbook, targetPlant);
+        resolve(res);
       } catch (err) {
         reject(err);
       }
