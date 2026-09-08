@@ -20,6 +20,7 @@ import { AuditLogs } from './components/AuditLogs';
 import { UploadPreviewModal } from './components/UploadPreviewModal';
 import { ExcelParseResult } from './services/excelService';
 import { InventorySyncModal } from './components/InventorySyncModal';
+import { setStoredInventory, getStoredInventory } from './services/idbStorage';
 
 
 // Tab Display Names Mapping
@@ -1031,9 +1032,9 @@ function App() {
       setApiSource(partsSource);
 
       try {
-        localStorage.setItem('spareshare_inventory', JSON.stringify(enrichedParts));
+        await setStoredInventory(enrichedParts);
       } catch (e) {
-        console.warn("[DB Fallback] Failed to sync to localStorage:", e);
+        console.warn("[DB Fallback] Failed to sync to IndexedDB:", e);
       }
 
       // 4. Fetch backend factories dynamically
@@ -2355,9 +2356,9 @@ Ensure the Excel format is correct and you have a stable internet connection.
           });
           setParts(enrichedParts);
           try {
-            localStorage.setItem('spareshare_inventory', JSON.stringify(enrichedParts));
+            setStoredInventory(enrichedParts);
           } catch (e) {
-            console.warn("[Upload Sync] Failed to sync to localStorage:", e);
+            console.warn("[Upload Sync] Failed to sync to IndexedDB:", e);
           }
         }}
         currentUsername={currentUser.username}

@@ -11,6 +11,7 @@
 
 import * as XLSX from 'xlsx';
 import type { SparePart } from '../types.ts';
+import { getStoredInventory, setStoredInventory } from './idbStorage';
 
 // ---------------------------------------------------------------------------
 // Canonical Row Schema
@@ -670,11 +671,16 @@ export async function parseAndSyncPlantFile(
 
   const targetPlantId = parseRes.plantId || canonicalPlantId;
 
-  // Retrieve existing inventory cache
+  // Retrieve existing inventory cache from IndexedDB
   let existingList: SparePart[] = [];
   try {
-    const existingStr = typeof localStorage !== 'undefined' ? localStorage.getItem('spareshare_inventory') : null;
-    existingList = existingStr ? JSON.parse(existingStr) : [];
+    const stored = await getStoredInventory();
+    if (stored && Array.isArray(stored)) {
+      existingList = stored;
+    } else {
+      const existingStr = typeof localStorage !== 'undefined' ? localStorage.getItem('spareshare_inventory') : null;
+      existingList = existingStr ? JSON.parse(existingStr) : [];
+    }
   } catch {
     existingList = [];
   }
@@ -687,8 +693,19 @@ export async function parseAndSyncPlantFile(
     const normalizedItem: SparePart = { ...item, factoryId: itemPlantId };
 
     if (itemPlantId === targetPlantId) {
-      targetPlantExistingMap.set(normalizedItem.materialNumber.trim().toLowerCase(), normalizedItem);
-      targetPlantExistingMap.set(normalizedItem.id.trim().toLowerCase(), normalizedItem);
+      if (normalizedItem.materialNumber) {
+        const mat = normalizedItem.materialNumber.trim().toLowerCase();
+        targetPlantExistingMap.set(mat, normalizedItem);
+        targetPlantExistingMap.set(stripLeadingZeros(mat).toLowerCase(), normalizedItem);
+      }
+      if (normalizedItem.partNumber) {
+        const pn = normalizedItem.partNumber.trim().toLowerCase();
+        targetPlantExistingMap.set(pn, normalizedItem);
+        targetPlantExistingMap.set(stripLeadingZeros(pn).toLowerCase(), normalizedItem);
+      }
+      if (normalizedItem.id) {
+        targetPlantExistingMap.set(normalizedItem.id.trim().toLowerCase(), normalizedItem);
+      }
     } else {
       untouchedOtherPlantItems.push(normalizedItem);
     }
@@ -706,8 +723,11 @@ export async function parseAndSyncPlantFile(
     const plantForPart = targetPlantId;
     const compositeId = `${plantForPart}-${itemCode}`.replace(/[^a-zA-Z0-9\-_.]/g, '-');
     const lookupKey = itemCode.trim().toLowerCase();
+    const strippedLookupKey = stripLeadingZeros(lookupKey).toLowerCase();
 
-    const existingItem = targetPlantExistingMap.get(lookupKey) || targetPlantExistingMap.get(compositeId.toLowerCase());
+    const existingItem = targetPlantExistingMap.get(lookupKey) ||
+                         targetPlantExistingMap.get(strippedLookupKey) ||
+                         targetPlantExistingMap.get(compositeId.toLowerCase());
 
     const qty = Number(row.quantity_on_hand) || 0;
     const totVal = Number(row.total_value) || 0;
@@ -768,14 +788,8 @@ export async function parseAndSyncPlantFile(
   // Combine untouched items from other plants + updated/new items for target plant
   const finalInventory = [...untouchedOtherPlantItems, ...Array.from(processedTargetParts.values())];
 
-  // Save to localStorage
-  if (typeof localStorage !== 'undefined') {
-    try {
-      localStorage.setItem('spareshare_inventory', JSON.stringify(finalInventory));
-    } catch (err) {
-      console.warn('[parseAndSyncPlantFile] localStorage write error:', err);
-    }
-  }
+  // Save to IndexedDB (with localStorage fallback)
+  await setStoredInventory(finalInventory);
 
   // Save to Express REST API / Firestore
   const partsToSaveArray = Array.from(processedTargetParts.values());

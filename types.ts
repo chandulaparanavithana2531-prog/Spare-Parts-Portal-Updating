@@ -27,6 +27,8 @@ export interface SparePart {
   deleted_at?: number | null;
   lastStockUpdateDate?: string;
   lastStockUpdateUser?: string;
+  uom?: string;
+  legacyItemCode?: string;
 }
 
 export interface CartItem extends SparePart {

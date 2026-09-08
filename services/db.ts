@@ -3,6 +3,9 @@ import { db } from './firebase';
 import { SparePart, User, Order, OrderStatus, HistoricalConsumptionRecord, UploadHistoryRecord } from '../types';
 import { logAction } from './audit';
 import { resolvePlantId } from './inventorySyncService';
+import { getStoredInventory, setStoredInventory } from './idbStorage';
+
+export { getStoredInventory, setStoredInventory };
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
@@ -26,10 +29,9 @@ export const saveInventory = async (parts: SparePart[], performerUsername: strin
     console.warn(`[DB API] Save inventory API failed: ${err.message}. Falling back to Firestore directly.`);
   }
   
-  // Save to local storage first as a safety backup
+  // Save to IndexedDB storage first as a safety backup
   try {
-    const existingStr = localStorage.getItem('spareshare_inventory');
-    const existingList: SparePart[] = existingStr ? JSON.parse(existingStr) : [];
+    const existingList: SparePart[] = (await getStoredInventory()) || [];
     parts.forEach(newPart => {
       const idx = existingList.findIndex(p => p.id === newPart.id);
       if (idx !== -1) {
@@ -38,9 +40,9 @@ export const saveInventory = async (parts: SparePart[], performerUsername: strin
         existingList.push(newPart);
       }
     });
-    localStorage.setItem('spareshare_inventory', JSON.stringify(existingList));
+    await setStoredInventory(existingList);
   } catch (err) {
-    console.warn("[DB Fallback] Failed to save copy in localStorage:", err);
+    console.warn("[DB Fallback] Failed to save copy in IndexedDB:", err);
   }
 
   try {
@@ -200,8 +202,7 @@ export const saveInventory = async (parts: SparePart[], performerUsername: strin
 export const getInventory = async (user?: User): Promise<SparePart[]> => {
   let localParts: SparePart[] = [];
   try {
-    const localStr = localStorage.getItem('spareshare_inventory');
-    const rawLocal: SparePart[] = localStr ? JSON.parse(localStr) : [];
+    const rawLocal: SparePart[] = (await getStoredInventory()) || [];
     localParts = rawLocal.map(p => ({
       ...p,
       factoryId: resolvePlantId(p.factoryId)
@@ -238,11 +239,7 @@ export const getInventory = async (user?: User): Promise<SparePart[]> => {
     }
 
     if (localParts.length > 0) {
-      try {
-        localStorage.setItem('spareshare_inventory', JSON.stringify(localParts));
-      } catch (e) {
-        console.warn("[DB Fallback] Failed to sync to localStorage:", e);
-      }
+      await setStoredInventory(localParts);
     }
     return localParts;
   } catch (error: any) {
@@ -810,14 +807,24 @@ export const clearAuditLogs = async (performerUsername: string) => {
 };
 
 export const deleteFactoryData = async (factoryId: string, performerUsername: string) => {
+  // Clear from IndexedDB
+  try {
+    const stored = (await getStoredInventory()) || [];
+    const targetPlant = resolvePlantId(factoryId);
+    const filtered = stored.filter(p => resolvePlantId(p.factoryId) !== targetPlant);
+    await setStoredInventory(filtered);
+  } catch (err) {
+    console.warn('[deleteFactoryData] Failed to clear IndexedDB:', err);
+  }
+
   // Query all inventory items for this factory
   const inventoryRef = collection(db, 'inventory');
   const q = query(inventoryRef, where('factoryId', '==', factoryId));
   const querySnapshot = await getDocs(q);
 
-  if (querySnapshot.empty) return;
-
-  await deleteInBatches(querySnapshot);
+  if (!querySnapshot.empty) {
+    await deleteInBatches(querySnapshot);
+  }
 
   await logAction(
     performerUsername,
