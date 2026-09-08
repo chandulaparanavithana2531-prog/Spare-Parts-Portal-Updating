@@ -1754,123 +1754,12 @@ Ensure the Excel format is correct and you have a stable internet connection.
               </button>
             </div>
 
-            {/* Inner Sub-Tabs Segmented Control */}
-            <div className="flex p-1 bg-gray-100/60 rounded-xl border border-gray-200/50 max-w-2xl">
-              <button
-                onClick={() => { setManageDataTab('excel'); setReportFeedback(null); setHistoryFeedback(null); }}
-                className={`flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg transition-all ${
-                  manageDataTab === 'excel' ? 'bg-white text-blue-600 shadow' : 'text-gray-400 hover:text-gray-600'
-                }`}
-              >
-                Excel Templates
-              </button>
-              <button
-                onClick={() => { setManageDataTab('system'); setReportFeedback(null); setHistoryFeedback(null); }}
-                className={`flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg transition-all ${
-                  manageDataTab === 'system' ? 'bg-white text-blue-600 shadow' : 'text-gray-400 hover:text-gray-600'
-                }`}
-              >
-                System Reports
-              </button>
+            {/* Standard Excel Grid Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {factories.map(factory => (
+                <FactoryCard key={factory.id} factory={factory} />
+              ))}
             </div>
-
-            {manageDataTab === 'excel' ? (
-              /* Standard Excel Grid Cards */
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                {factories.map(factory => (
-                  <FactoryCard key={factory.id} factory={factory} />
-                ))}
-              </div>
-            ) : (
-              /* Daily System Reports (SAP / Oracle) Form */
-              <div className="bg-white rounded-3xl border border-gray-200/50 p-8 shadow-sm max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-300">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                  {/* Factory Selection */}
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">Target Factory</label>
-                    <select
-                      value={selectedReportFactory}
-                      onChange={(e) => { setSelectedReportFactory(e.target.value); setReportFeedback(null); }}
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 outline-none text-sm transition-all cursor-pointer font-semibold text-gray-700"
-                    >
-                      {factories.map(f => <option key={f.id} value={f.name}>{f.name}</option>)}
-                    </select>
-                  </div>
-
-                  {/* System Selection */}
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">ERP System Vendor</label>
-                    <div className="flex bg-gray-100/50 p-1.5 rounded-xl border border-gray-200/50">
-                      <div className="w-full text-center py-2 text-xs font-black uppercase tracking-wider text-blue-600 bg-white rounded-lg shadow-sm">
-                        {selectedSystem} ERP (Auto-Selected)
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                  {/* Report Type Select */}
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">System Report Type</label>
-                    <select
-                      value={selectedReportType}
-                      onChange={(e) => { setSelectedReportType(e.target.value); setReportFeedback(null); }}
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 outline-none text-sm transition-all cursor-pointer font-semibold text-gray-700"
-                    >
-                      {selectedSystem === 'SAP' ? (
-                        <>
-                          <option value="MB52">MB52 — Warehouse Stock Report (Updates stock)</option>
-                          <option value="MB51">MB51 — Material Document List (Subtracts daily consumption)</option>
-                        </>
-                      ) : (
-                        <>
-                          <option value="SUBINVENTORY">Subinventory Quantity Report (Updates stock)</option>
-                          <option value="TRANSACTION">Material Transaction Report (Subtracts daily consumption)</option>
-                        </>
-                      )}
-                    </select>
-                  </div>
-
-                  {/* File Upload Actions */}
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">Select & Upload File</label>
-                    <label className={`
-                      w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-50 text-blue-600 border-2 border-dashed border-blue-200 hover:border-blue-400 rounded-xl text-sm font-bold text-center cursor-pointer transition-all duration-200
-                      ${isProcessingReport ? 'opacity-50 pointer-events-none' : ''}
-                    `}>
-                      {isProcessingReport ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          <span>Processing report...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="w-4 h-4" />
-                          <span>Choose Report Excel/CSV</span>
-                        </>
-                      )}
-                      <input
-                        type="file"
-                        accept=".xlsx, .xls, .csv"
-                        onChange={handleSystemReportUpload}
-                        className="hidden"
-                        disabled={isProcessingReport}
-                      />
-                    </label>
-                  </div>
-                </div>
-
-                {reportFeedback && (
-                  <div className="mt-6 p-5 bg-green-50 border border-green-100 text-green-800 rounded-2xl flex items-start gap-3 animate-in fade-in zoom-in duration-200">
-                    <CheckCircle className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
-                    <div>
-                      <h4 className="text-xs font-black uppercase tracking-wider text-green-900">Upload Processed Successfully</h4>
-                      <p className="text-xs mt-1 leading-relaxed font-semibold">{reportFeedback}</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         ) : (
           <>
@@ -2083,7 +1972,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
                           <h2 className="text-2xl font-bold text-gray-900">Manage Factory Data</h2>
                           <p className="text-gray-500 text-sm mt-1">
                             {currentUser.role === 'admin' 
-                              ? "Upload parts inventories, synchronize Google Sheets, or ingest daily/weekly system reports."
+                              ? "Upload parts inventories or synchronize Google Sheets."
                               : "Weekly Report Ingestion System. Upload your plant's SAP or Oracle inventory report to keep the portal's stock counts updated."
                             }
                           </p>
@@ -2201,30 +2090,8 @@ Ensure the Excel format is correct and you have a stable internet connection.
                         </div>
                       )}
 
-                      {/* Inner Sub-Tabs Segmented Control - Admin Only */}
-                      {currentUser.role === 'admin' && (
-                        <div className="flex p-1 bg-gray-100/60 rounded-xl border border-gray-200/50 max-w-2xl">
-                          <button
-                            onClick={() => { setManageDataTab('excel'); setReportFeedback(null); setHistoryFeedback(null); }}
-                            className={`flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg transition-all ${
-                              manageDataTab === 'excel' ? 'bg-white text-blue-600 shadow' : 'text-gray-400 hover:text-gray-600'
-                            }`}
-                          >
-                            Excel Templates
-                          </button>
-                          <button
-                            onClick={() => { setManageDataTab('system'); setReportFeedback(null); setHistoryFeedback(null); }}
-                            className={`flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg transition-all ${
-                              manageDataTab === 'system' ? 'bg-white text-blue-600 shadow' : 'text-gray-400 hover:text-gray-600'
-                            }`}
-                          >
-                            System Reports
-                          </button>
-                        </div>
-                      )}
-
                       {/* Main data view content */}
-                      {currentUser.role === 'user' || manageDataTab === 'system' ? (
+                      {currentUser.role === 'user' ? (
                         /* Daily System Reports (SAP / Oracle) Form */
                         <div className="bg-white rounded-3xl border border-gray-200/50 p-8 shadow-sm max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-300">
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
@@ -2234,7 +2101,7 @@ Ensure the Excel format is correct and you have a stable internet connection.
                               <select
                                 value={selectedReportFactory}
                                 onChange={(e) => { setSelectedReportFactory(e.target.value); setReportFeedback(null); }}
-                                disabled={currentUser.role !== 'admin'}
+                                disabled={true}
                                 className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 outline-none text-sm transition-all cursor-pointer font-semibold text-gray-700 disabled:opacity-75 disabled:cursor-not-allowed disabled:bg-gray-100"
                               >
                                 {factories.map(f => <option key={f.id} value={f.name}>{f.name}</option>)}

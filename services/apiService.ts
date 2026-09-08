@@ -541,27 +541,25 @@ export async function uploadInventorySync(
     }
   }
 
-  if (!savedViaServer) {
-    // Fallback: merge into localStorage directly
-    console.log(`[Inventory Sync] Server unreachable — saving ${partsToSave.length} items to localStorage.`);
-    try {
-      const prevStr = localStorage.getItem('spareshare_inventory');
-      const prevList: SparePart[] = prevStr ? JSON.parse(prevStr) : [];
-      const idMap = new Map(prevList.map((p, i) => [p.id, i]));
+  // Always sync parsed parts into localStorage as well for instant UI updates
+  try {
+    const prevStr = localStorage.getItem('spareshare_inventory');
+    const prevList: SparePart[] = prevStr ? JSON.parse(prevStr) : [];
+    const idMap = new Map(prevList.map((p, i) => [p.id, i]));
 
-      for (const part of partsToSave) {
-        const idx = idMap.get(part.id);
-        if (idx !== undefined) {
-          prevList[idx] = part;
-        } else {
-          prevList.push(part);
-        }
+    for (const part of partsToSave) {
+      const idx = idMap.get(part.id);
+      if (idx !== undefined) {
+        prevList[idx] = { ...prevList[idx], ...part };
+      } else {
+        prevList.push(part);
       }
-
-      localStorage.setItem('spareshare_inventory', JSON.stringify(prevList));
-    } catch (lsErr) {
-      console.warn('[Inventory Sync] localStorage save also failed:', lsErr);
     }
+
+    localStorage.setItem('spareshare_inventory', JSON.stringify(prevList));
+    console.log(`[Inventory Sync] Synced ${partsToSave.length} items to local storage cache.`);
+  } catch (lsErr) {
+    console.warn('[Inventory Sync] localStorage sync failed:', lsErr);
   }
 
   // ── Step 3: Audit log (best-effort, non-blocking) ──
