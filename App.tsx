@@ -2338,6 +2338,27 @@ Ensure the Excel format is correct and you have a stable internet connection.
         isOpen={showInventorySyncModal}
         onClose={() => setShowInventorySyncModal(false)}
         onSyncComplete={refreshData}
+        onInventoryUpdated={(newParts) => {
+          const enrichedParts = newParts.map(part => {
+            let imageUrl = part.imageUrl || (part as any).image_url;
+            if (imageUrl) imageUrl = normalizeImageUrl(imageUrl);
+            if (!imageUrl || imageUrl === 'NONE') {
+              const mappedUrl = materialImages[part.materialNumber as keyof typeof materialImages];
+              if (mappedUrl) imageUrl = mappedUrl;
+            }
+            return {
+              ...part,
+              imageUrl,
+              image_url: imageUrl
+            };
+          });
+          setParts(enrichedParts);
+          try {
+            localStorage.setItem('spareshare_inventory', JSON.stringify(enrichedParts));
+          } catch (e) {
+            console.warn("[Upload Sync] Failed to sync to localStorage:", e);
+          }
+        }}
         currentUsername={currentUser.username}
         plants={factories.map(f => ({ id: f.id, name: f.name }))}
       />
