@@ -86,14 +86,17 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({ parts, onFilterC
     FACTORY_ORDER.forEach(f => factoryMap.set(f.name, { skus: 0, value: 0 }));
 
     scopedParts.forEach(part => {
-      sumItems += part.onHand;
-      sumValue += part.totalValue;
+      const qty = Number(part.onHand) || 0;
+      const val = Number(part.totalValue) || 0;
+
+      sumItems += qty;
+      sumValue += val;
 
       // FSN Aggregates
       const fsnClass = part.fsnClassification || 'Non-moving';
       if (fsnCounts[fsnClass] !== undefined) {
         fsnCounts[fsnClass]++;
-        fsnValues[fsnClass] += part.totalValue;
+        fsnValues[fsnClass] += val;
       }
 
       // Factory Aggregates
@@ -102,7 +105,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({ parts, onFilterC
       }
       const fData = factoryMap.get(part.factoryId)!;
       fData.skus++;
-      fData.value += part.totalValue;
+      fData.value += val;
     });
 
     const fsnChart = Object.keys(fsnCounts).map(key => ({

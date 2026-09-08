@@ -496,6 +496,10 @@ export async function uploadInventorySync(
       newItemsAdded++;
     }
 
+    const qty = Number(row.quantity_on_hand) || 0;
+    const totVal = Number(row.total_value) || 0;
+    const uCost = Number(row.unit_cost) || (qty > 0 && totVal > 0 ? totVal / qty : 0);
+
     const sparePart: SparePart = {
       id: safeId,
       factoryId: row.plant_id,
@@ -503,9 +507,9 @@ export async function uploadInventorySync(
       partNumber: row.item_code,
       description: row.description,
       categoryName: row.category || '-',
-      onHand: row.quantity_on_hand,
-      unitCost: row.unit_cost || 0,
-      totalValue: row.total_value || ((row.unit_cost || 0) * row.quantity_on_hand),
+      onHand: qty,
+      unitCost: uCost,
+      totalValue: totVal || (uCost * qty),
       spareType: row.category || 'General',
       machine: '-',
       criticality: '-',

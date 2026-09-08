@@ -222,7 +222,7 @@ export const getInventory = async (user?: User): Promise<SparePart[]> => {
       for (const fp of firestoreParts) {
         const idx = localMap.get(fp.id);
         if (idx !== undefined) {
-          localParts[idx] = { ...localParts[idx], ...fp };
+          localParts[idx] = { ...fp, ...localParts[idx] };
         } else {
           localParts.push(fp);
         }
