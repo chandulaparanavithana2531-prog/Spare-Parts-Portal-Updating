@@ -1,7 +1,9 @@
 import { SparePart, HistoricalConsumptionRecord } from '../types';
 import { getHistoricalConsumption } from './db';
 import { logAction } from './audit';
-import { parseInventoryFile } from './inventorySyncService';
+import { parseInventoryFile, parseAndSyncPlantFile, IngestionSummary } from './inventorySyncService';
+
+export { parseAndSyncPlantFile };
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
@@ -20,6 +22,39 @@ async function fetchWithTimeout(resource: string | URL, options: RequestInit & {
     clearTimeout(id);
     throw err;
   }
+}
+
+/**
+ * Uploads an SAP or Oracle inventory Excel file to the client-side sync pipeline.
+ *
+ * @param file     - The .xlsx / .xls file selected by the user
+ * @param plantId  - Target plant / factory ID or key (e.g. "LT", "LWT", "RCL-H", "RCL-E", "Lanka Tiles")
+ * @param username - Performer username for audit logging
+ * @returns IngestionSummary with counts of added / updated / skipped rows
+ */
+export async function uploadInventorySync(
+  file: File,
+  plantId: string,
+  username: string
+): Promise<IngestionSummary> {
+  console.log(`[Inventory Sync] Synchronizing "${file.name}" client-side for plant "${plantId}"…`);
+  const result = await parseAndSyncPlantFile(file, plantId, username);
+
+  // Best-effort audit logging
+  try {
+    await logAction(
+      username,
+      'UPLOAD',
+      'inventory',
+      result.plant,
+      `Synced items from ${file.name} for ${result.plant}`,
+      { userName: username, plantId: result.plant, plantName: result.plant }
+    );
+  } catch (auditErr) {
+    console.warn('[Inventory Sync] Audit log write failed (non-fatal):', auditErr);
+  }
+
+  return result;
 }
 
 // High-quality mock data for backend fallback when the server is offline or unavailable
@@ -431,181 +466,5 @@ export async function notifyOrderCreated(eventData: {
 // Inventory Sync Upload — SAP & Oracle auto-detect endpoint
 // ---------------------------------------------------------------------------
 
-export interface IngestionSummary {
-  status: 'success' | 'error';
-  source: 'SAP' | 'ORACLE' | 'UNKNOWN';
-  plant: string;
-  total_rows_read: number;
-  items_updated: number;
-  new_items_added: number;
-  skipped_rows: number;
-  sheet_rows_updated?: number;
-  sheet_new_rows_appended?: number;
-  sheet_warning?: string;
-  message?: string;
-  /** The full merged inventory list after upsert — use to update React state directly */
-  updatedParts?: SparePart[];
-}
+export type { IngestionSummary };
 
-/**
- * Uploads an SAP or Oracle inventory Excel file to the backend sync endpoint.
- * The server auto-detects the format, normalises rows to the canonical schema,
- * and performs a transactional batch upsert (insert new + update existing).
- *
- * @param file     - The .xlsx / .xls file selected by the user
- * @param plantId  - Target plant / factory ID (e.g. "Lanka Tiles")
- * @param username - Performer username for audit logging
- * @returns IngestionSummary with counts of added / updated / skipped rows
- */
-export async function uploadInventorySync(
-  file: File,
-  plantId: string,
-  username: string
-): Promise<IngestionSummary> {
-  // ── Step 1: Parse the Excel file entirely client-side (browser) ──
-  // This avoids any HTTP 405 / proxy / CORS issues by never POSTing the file.
-  console.log(`[Inventory Sync] Parsing "${file.name}" client-side for plant "${plantId}"…`);
-
-  const parseRes = await parseInventoryFile(file, plantId);
-
-  if (!parseRes.rows || parseRes.rows.length === 0) {
-    throw new Error('No valid data rows could be extracted from the uploaded file.');
-  }
-
-  const now = Date.now();
-  const partsToSave: SparePart[] = [];
-  let itemsUpdated = 0;
-  let newItemsAdded = 0;
-
-  // Load existing inventory for update/add counting
-  let existingList: SparePart[] = [];
-  try {
-    const existingStr = localStorage.getItem('spareshare_inventory');
-    existingList = existingStr ? JSON.parse(existingStr) : [];
-  } catch {
-    existingList = [];
-  }
-  const existingIds = new Set(existingList.map(p => p.id));
-
-  for (const row of parseRes.rows) {
-    const safeId = `${row.plant_id}-${row.item_code}`.replace(/[^a-zA-Z0-9\-_.]/g, '-');
-
-    if (existingIds.has(safeId)) {
-      itemsUpdated++;
-    } else {
-      newItemsAdded++;
-    }
-
-    const qty = Number(row.quantity_on_hand) || 0;
-    const totVal = Number(row.total_value) || 0;
-    const uCost = Number(row.unit_cost) || (qty > 0 && totVal > 0 ? totVal / qty : 0);
-
-    const sparePart: SparePart = {
-      id: safeId,
-      factoryId: row.plant_id,
-      materialNumber: row.item_code,
-      partNumber: row.item_code,
-      description: row.description,
-      categoryName: row.category || '-',
-      onHand: qty,
-      unitCost: uCost,
-      totalValue: totVal || (uCost * qty),
-      spareType: row.category || 'General',
-      machine: '-',
-      criticality: '-',
-      qtyMoreThan3Years: 0,
-      valueMoreThan3Years: 0,
-      lastStockUpdateDate: new Date(now).toISOString().split('T')[0],
-      lastStockUpdateUser: username,
-      ...(row.legacy_item_code ? { legacyItemCode: row.legacy_item_code } : {}),
-    };
-
-    partsToSave.push(sparePart);
-  }
-
-  // ── Step 2: Persist parsed parts ──
-  // Try the Express server save-inventory endpoint first (writes to db.json),
-  // then fall back to localStorage if the server is unreachable.
-  let savedViaServer = false;
-  let sheetRowsUpdated: number | undefined = undefined;
-  let sheetNewRowsAppended: number | undefined = undefined;
-  let sheetWarning: string | undefined = undefined;
-
-  const saveUrls = [
-    `${API_URL}/api/inventory/save-inventory`,
-    'http://localhost:3000/api/inventory/save-inventory',
-  ];
-
-  for (const url of saveUrls) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parts: partsToSave, username }),
-      });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        sheetRowsUpdated = data.sheetRowsUpdated ?? data.sheet_rows_updated;
-        sheetNewRowsAppended = data.sheetNewRowsAppended ?? data.sheet_new_rows_appended;
-        sheetWarning = data.sheetWarning ?? data.sheet_warning;
-        console.log(`[Inventory Sync] Saved ${partsToSave.length} items via server (${url}). Sheet: ${sheetRowsUpdated} updated, ${sheetNewRowsAppended} appended.`);
-        savedViaServer = true;
-        break;
-      }
-    } catch {
-      // try next URL
-    }
-  }
-
-  // Always sync parsed parts into localStorage as well for instant UI updates
-  let mergedFullList: SparePart[] = partsToSave; // fallback if localStorage fails
-  try {
-    const prevStr = localStorage.getItem('spareshare_inventory');
-    const prevList: SparePart[] = prevStr ? JSON.parse(prevStr) : [];
-    const idMap = new Map(prevList.map((p, i) => [p.id, i]));
-
-    for (const part of partsToSave) {
-      const idx = idMap.get(part.id);
-      if (idx !== undefined) {
-        prevList[idx] = { ...prevList[idx], ...part };
-      } else {
-        prevList.push(part);
-      }
-    }
-
-    localStorage.setItem('spareshare_inventory', JSON.stringify(prevList));
-    mergedFullList = prevList;
-    console.log(`[Inventory Sync] Synced ${partsToSave.length} items to local storage cache. Total inventory: ${prevList.length}`);
-  } catch (lsErr) {
-    console.warn('[Inventory Sync] localStorage sync failed:', lsErr);
-  }
-
-  // ── Step 3: Audit log (best-effort, non-blocking) ──
-  try {
-    await logAction(
-      username,
-      'UPLOAD',
-      'inventory',
-      parseRes.plantId || plantId,
-      `Synced ${parseRes.rows.length} items from ${file.name} for ${parseRes.plantId || plantId}`,
-      { userName: username, plantId: parseRes.plantId || plantId, plantName: parseRes.plantId || plantId },
-    );
-  } catch (auditErr) {
-    console.warn('[Inventory Sync] Audit log write failed (non-fatal):', auditErr);
-  }
-
-  return {
-    status: 'success',
-    source: parseRes.format as 'SAP' | 'ORACLE' | 'UNKNOWN',
-    plant: parseRes.plantId || plantId,
-    total_rows_read: parseRes.totalRowsRead,
-    items_updated: itemsUpdated,
-    new_items_added: newItemsAdded,
-    skipped_rows: parseRes.skipped,
-    sheet_rows_updated: sheetRowsUpdated,
-    sheet_new_rows_appended: sheetNewRowsAppended,
-    sheet_warning: sheetWarning,
-    message: `Successfully synced ${parseRes.rows.length} items for ${parseRes.plantId || plantId} (${newItemsAdded} new, ${itemsUpdated} updated, ${parseRes.skipped} skipped).`,
-    updatedParts: mergedFullList,
-  };
-}

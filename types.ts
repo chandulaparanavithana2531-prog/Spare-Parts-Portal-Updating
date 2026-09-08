@@ -41,24 +41,26 @@ export interface FactorySummary {
   skuCount: number;
 }
 
-export enum SortField {
-  MATERIAL_NUMBER = 'materialNumber',
-  PART_NUMBER = 'partNumber',
-  DESCRIPTION = 'description',
-  MACHINE = 'machine',
-  TOTAL_VALUE = 'totalValue',
-  ON_HAND = 'onHand',
-  FACTORY = 'factoryId',
-  SPARE_TYPE = 'spareType',
-  CATEGORY = 'categoryName',
-  CRITICALITY = 'criticality',
-  FSN = 'fsnClassification'
-}
+export const SortField = {
+  MATERIAL_NUMBER: 'materialNumber',
+  PART_NUMBER: 'partNumber',
+  DESCRIPTION: 'description',
+  MACHINE: 'machine',
+  TOTAL_VALUE: 'totalValue',
+  ON_HAND: 'onHand',
+  FACTORY: 'factoryId',
+  SPARE_TYPE: 'spareType',
+  CATEGORY: 'categoryName',
+  CRITICALITY: 'criticality',
+  FSN: 'fsnClassification'
+} as const;
+export type SortField = typeof SortField[keyof typeof SortField];
 
-export enum SortDirection {
-  ASC = 'asc',
-  DESC = 'desc'
-}
+export const SortDirection = {
+  ASC: 'asc',
+  DESC: 'desc'
+} as const;
+export type SortDirection = typeof SortDirection[keyof typeof SortDirection];
 
 // --- Auth & Orders ---
 

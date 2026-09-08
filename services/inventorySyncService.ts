@@ -10,12 +10,14 @@
  */
 
 import * as XLSX from 'xlsx';
+import type { SparePart } from '../types.ts';
 
 // ---------------------------------------------------------------------------
 // Canonical Row Schema
 // ---------------------------------------------------------------------------
 
 export type PlantId = 'Lanka Tiles' | 'Lanka Wall Tiles' | 'Rocell Horana' | 'Rocell Eheliyagoda';
+export type PlantKey = 'LT' | 'LWT' | 'RCL-H' | 'RCL-E';
 
 export interface CanonicalInventoryRow {
   /** Composite DB key segment — plant affiliation */
@@ -55,6 +57,10 @@ export interface IngestionSummary {
   new_items_added: number;
   skipped_rows: number;
   message?: string;
+  sheet_rows_updated?: number;
+  sheet_new_rows_appended?: number;
+  sheet_warning?: string;
+  updatedParts?: SparePart[];
 }
 
 // ---------------------------------------------------------------------------
@@ -155,15 +161,15 @@ export function isInvalidItemCode(raw: any): boolean {
 }
 
 /**
- * Normalises raw plant name input to canonical PlantId
+ * Normalises raw plant name input or plant key ('LT', 'LWT', 'RCL-H', 'RCL-E') to canonical PlantId
  */
 export function resolvePlantId(rawName: string | undefined | null, fallback: string = 'Lanka Tiles'): PlantId {
-  if (!rawName) return fallback as PlantId;
+  if (!rawName) return (fallback || 'Lanka Tiles') as PlantId;
   const s = rawName.trim().toLowerCase();
-  if (s.includes('lanka') && s.includes('wall')) return 'Lanka Wall Tiles';
-  if (s.includes('lanka') && (s.includes('tile') || s.includes('lt'))) return 'Lanka Tiles';
-  if (s.includes('horana') || s.includes('rcl-h') || s.includes('rclh')) return 'Rocell Horana';
-  if (s.includes('eheliyagoda') || s.includes('rcl-e') || s.includes('rcle') || s === 'gsc') return 'Rocell Eheliyagoda';
+  if (s === 'lwt' || (s.includes('lanka') && s.includes('wall'))) return 'Lanka Wall Tiles';
+  if (s === 'lt' || (s.includes('lanka') && (s.includes('tile') || s.includes('lt')))) return 'Lanka Tiles';
+  if (s === 'rcl-h' || s === 'rclh' || s.includes('horana')) return 'Rocell Horana';
+  if (s === 'rcl-e' || s === 'rcle' || s.includes('eheliyagoda') || s === 'gsc') return 'Rocell Eheliyagoda';
   return (fallback || 'Lanka Tiles') as PlantId;
 }
 
@@ -634,3 +640,170 @@ export async function parseInventoryFile(
     reader.readAsArrayBuffer(file);
   });
 }
+
+/**
+ * Main client-side parsing & multi-plant inventory synchronization entrypoint.
+ * Parses Excel files client-side using `xlsx` to avoid HTTP 405 errors.
+ * 
+ * Rules:
+ *   1. Existing Spare Part Match: Update/replace stock quantity with new report quantity
+ *      (and update unit cost, total valuation, and description if changed).
+ *   2. New Spare Part (Code Not Found in Portal): Create and insert new item record under plant catalog.
+ *   3. Keep items in other plants untouched.
+ */
+export async function parseAndSyncPlantFile(
+  file: File,
+  plantKey: PlantKey | string,
+  username: string = 'System User'
+): Promise<IngestionSummary & { updatedParts?: SparePart[] }> {
+  const arrayBuffer = await file.arrayBuffer();
+  const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+  const firstSheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[firstSheetName];
+
+  const canonicalPlantId = resolvePlantId(plantKey);
+  const parseRes = parseInventoryWorkbook(workbook, canonicalPlantId);
+
+  if (!parseRes.rows || parseRes.rows.length === 0) {
+    throw new Error(`No valid inventory rows extracted from "${file.name}" for plant ${plantKey}.`);
+  }
+
+  const targetPlantId = parseRes.plantId || canonicalPlantId;
+
+  // Retrieve existing inventory cache
+  let existingList: SparePart[] = [];
+  try {
+    const existingStr = typeof localStorage !== 'undefined' ? localStorage.getItem('spareshare_inventory') : null;
+    existingList = existingStr ? JSON.parse(existingStr) : [];
+  } catch {
+    existingList = [];
+  }
+
+  const untouchedOtherPlantItems: SparePart[] = [];
+  const targetPlantExistingMap = new Map<string, SparePart>();
+
+  for (const item of existingList) {
+    if (item.factoryId === targetPlantId) {
+      targetPlantExistingMap.set(item.materialNumber.trim().toLowerCase(), item);
+      targetPlantExistingMap.set(item.id.trim().toLowerCase(), item);
+    } else {
+      untouchedOtherPlantItems.push(item);
+    }
+  }
+
+  let itemsUpdated = 0;
+  let newItemsAdded = 0;
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString().split('T')[0];
+
+  const processedTargetParts = new Map<string, SparePart>();
+
+  for (const row of parseRes.rows) {
+    const itemCode = row.item_code;
+    const plantForPart = targetPlantId;
+    const compositeId = `${plantForPart}-${itemCode}`.replace(/[^a-zA-Z0-9\-_.]/g, '-');
+    const lookupKey = itemCode.trim().toLowerCase();
+
+    const existingItem = targetPlantExistingMap.get(lookupKey) || targetPlantExistingMap.get(compositeId.toLowerCase());
+
+    const qty = Number(row.quantity_on_hand) || 0;
+    const totVal = Number(row.total_value) || 0;
+    const uCost = Number(row.unit_cost) || (qty > 0 && totVal > 0 ? totVal / qty : 0);
+
+    if (existingItem) {
+      if (!processedTargetParts.has(compositeId)) {
+        itemsUpdated++;
+      }
+      // Match found: Update/replace stock quantity, unit cost, total valuation, and description if changed
+      const updatedPart: SparePart = {
+        ...existingItem,
+        id: compositeId,
+        factoryId: plantForPart,
+        materialNumber: itemCode,
+        partNumber: itemCode,
+        description: row.description || existingItem.description,
+        onHand: qty,
+        unitCost: uCost || existingItem.unitCost || 0,
+        totalValue: totVal || (uCost * qty) || existingItem.totalValue || 0,
+        categoryName: row.category || existingItem.categoryName || '-',
+        spareType: row.category || existingItem.spareType || 'General',
+        uom: row.uom || existingItem.uom || 'EACH',
+        lastStockUpdateDate: nowIso,
+        lastStockUpdateUser: username,
+        ...(row.legacy_item_code ? { legacyItemCode: row.legacy_item_code } : {}),
+      };
+      processedTargetParts.set(compositeId, updatedPart);
+    } else {
+      if (!processedTargetParts.has(compositeId)) {
+        newItemsAdded++;
+      }
+      // New item creation under that plant's inventory catalog
+      const newPart: SparePart = {
+        id: compositeId,
+        factoryId: plantForPart,
+        materialNumber: itemCode,
+        partNumber: itemCode,
+        description: row.description || 'No Description',
+        categoryName: row.category || '-',
+        onHand: qty,
+        unitCost: uCost,
+        totalValue: totVal || (uCost * qty),
+        spareType: row.category || 'General',
+        uom: row.uom || 'EACH',
+        machine: '-',
+        criticality: '-',
+        qtyMoreThan3Years: 0,
+        valueMoreThan3Years: 0,
+        lastStockUpdateDate: nowIso,
+        lastStockUpdateUser: username,
+        ...(row.legacy_item_code ? { legacyItemCode: row.legacy_item_code } : {}),
+      };
+      processedTargetParts.set(compositeId, newPart);
+    }
+  }
+
+  // Combine untouched items from other plants + updated/new items for target plant
+  const finalInventory = [...untouchedOtherPlantItems, ...Array.from(processedTargetParts.values())];
+
+  // Save to localStorage
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem('spareshare_inventory', JSON.stringify(finalInventory));
+    } catch (err) {
+      console.warn('[parseAndSyncPlantFile] localStorage write error:', err);
+    }
+  }
+
+  // Save to Express REST API / Firestore
+  const partsToSaveArray = Array.from(processedTargetParts.values());
+  const API_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || 'http://localhost:3000';
+  const saveUrls = [
+    `${API_URL}/api/inventory/save-inventory`,
+    'http://localhost:3000/api/inventory/save-inventory',
+  ];
+
+  for (const url of saveUrls) {
+    try {
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parts: partsToSaveArray, username }),
+      });
+      break;
+    } catch {
+      // API fallback
+    }
+  }
+
+  return {
+    status: 'success',
+    source: parseRes.format as 'SAP' | 'ORACLE' | 'UNKNOWN',
+    plant: targetPlantId,
+    total_rows_read: parseRes.totalRowsRead,
+    items_updated: itemsUpdated,
+    new_items_added: newItemsAdded,
+    skipped_rows: parseRes.skipped,
+    updatedParts: finalInventory,
+  };
+}
+
