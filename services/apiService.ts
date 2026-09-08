@@ -443,6 +443,8 @@ export interface IngestionSummary {
   sheet_new_rows_appended?: number;
   sheet_warning?: string;
   message?: string;
+  /** The full merged inventory list after upsert — use to update React state directly */
+  updatedParts?: SparePart[];
 }
 
 /**
@@ -552,6 +554,7 @@ export async function uploadInventorySync(
   }
 
   // Always sync parsed parts into localStorage as well for instant UI updates
+  let mergedFullList: SparePart[] = partsToSave; // fallback if localStorage fails
   try {
     const prevStr = localStorage.getItem('spareshare_inventory');
     const prevList: SparePart[] = prevStr ? JSON.parse(prevStr) : [];
@@ -567,7 +570,8 @@ export async function uploadInventorySync(
     }
 
     localStorage.setItem('spareshare_inventory', JSON.stringify(prevList));
-    console.log(`[Inventory Sync] Synced ${partsToSave.length} items to local storage cache.`);
+    mergedFullList = prevList;
+    console.log(`[Inventory Sync] Synced ${partsToSave.length} items to local storage cache. Total inventory: ${prevList.length}`);
   } catch (lsErr) {
     console.warn('[Inventory Sync] localStorage sync failed:', lsErr);
   }
@@ -598,5 +602,6 @@ export async function uploadInventorySync(
     sheet_new_rows_appended: sheetNewRowsAppended,
     sheet_warning: sheetWarning,
     message: `Successfully synced ${parseRes.rows.length} items for ${parseRes.plantId || plantId} (${newItemsAdded} new, ${itemsUpdated} updated, ${parseRes.skipped} skipped).`,
+    updatedParts: mergedFullList,
   };
 }

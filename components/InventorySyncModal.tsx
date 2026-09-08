@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { detectPlantAndFormat } from '../services/inventorySyncService';
 import { uploadInventorySync, IngestionSummary } from '../services/apiService';
+import { SparePart } from '../types';
 import * as XLSX from 'xlsx';
 
 // ---------------------------------------------------------------------------
@@ -33,6 +34,7 @@ interface InventorySyncModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSyncComplete: () => void;   // called after a successful sync to refresh parts list
+  onInventoryUpdated?: (parts: SparePart[]) => void;  // direct state update with freshly parsed data
   currentUsername: string;
   plants: Plant[];
 }
@@ -78,6 +80,7 @@ export const InventorySyncModal: React.FC<InventorySyncModalProps> = ({
   isOpen,
   onClose,
   onSyncComplete,
+  onInventoryUpdated,
   currentUsername,
   plants,
 }) => {
@@ -160,6 +163,14 @@ export const InventorySyncModal: React.FC<InventorySyncModalProps> = ({
       setProgress(100);
       setSummary(result);
       setPhase('success');
+
+      // Immediately push freshly parsed inventory into parent React state
+      if (result.updatedParts && onInventoryUpdated) {
+        console.log(`[InventorySyncModal] Pushing ${result.updatedParts.length} items directly to global state.`);
+        onInventoryUpdated(result.updatedParts);
+      }
+
+      // Also trigger a background refresh for server-side consistency
       onSyncComplete();
     } catch (err: any) {
       clearInterval(ticker);
