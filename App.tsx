@@ -995,10 +995,11 @@ function App() {
         getOrders({ username: 'admin', role: 'admin', approved: true } as any)
       ]);
 
-      // 3. Prioritize local backend server database (db.json) over Firestore when available
-      // to resolve cloud quota limits and ensure 100% parity with Google Sheets
-      const mergedParts = (partsSource === 'backend' && backendData.length > 0) ? backendData : localData;
-      const removedDuplicatesCount = (partsSource === 'backend' && backendData.length > 0) ? 0 : mergeAndDeduplicate(localData, backendData).removedDuplicatesCount;
+      // 3. Merge local storage dataset (which contains user-uploaded ERP reports) with backend dataset
+      // ensuring that uploaded items are preserved and combined seamlessly with backend data.
+      const deduplicatedResult = mergeAndDeduplicate(localData, backendData);
+      const mergedParts = deduplicatedResult.parts;
+      const removedDuplicatesCount = deduplicatedResult.removedDuplicatesCount;
 
       // Dynamically attach image URLs if missing or old Google Drive formats
       const enrichedParts = mergedParts.map(part => {

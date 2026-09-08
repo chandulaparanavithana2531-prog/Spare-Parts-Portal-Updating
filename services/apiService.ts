@@ -138,7 +138,7 @@ export async function fetchBackendParts(factoryAffiliation?: string): Promise<Fe
         }
         return {
           parts: data,
-          source: 'backend'
+          source: 'fallback'
         };
       }
     }

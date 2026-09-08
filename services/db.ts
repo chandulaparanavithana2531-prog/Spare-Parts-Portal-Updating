@@ -197,33 +197,49 @@ export const saveInventory = async (parts: SparePart[], performerUsername: strin
 };
 
 export const getInventory = async (user?: User): Promise<SparePart[]> => {
+  let localParts: SparePart[] = [];
+  try {
+    const localStr = localStorage.getItem('spareshare_inventory');
+    localParts = localStr ? JSON.parse(localStr) : [];
+  } catch (e) {
+    localParts = [];
+  }
+
   try {
     let querySnapshot = await getDocs(collection(db, 'inventory'));
     
-    const parts: SparePart[] = [];
+    const firestoreParts: SparePart[] = [];
     querySnapshot.forEach((doc) => {
       const part = doc.data() as SparePart;
       if (part.is_deleted !== true) {
-        parts.push(part);
+        firestoreParts.push(part);
       }
     });
-    // Sync to local storage for fallback use
-    try {
-      localStorage.setItem('spareshare_inventory', JSON.stringify(parts));
-    } catch (e) {
-      console.warn("[DB Fallback] Failed to sync to localStorage:", e);
+
+    // If Firestore returned items, merge with localParts without losing uploaded items
+    if (firestoreParts.length > 0) {
+      const localMap = new Map(localParts.map((p, i) => [p.id, i]));
+      for (const fp of firestoreParts) {
+        const idx = localMap.get(fp.id);
+        if (idx !== undefined) {
+          localParts[idx] = { ...localParts[idx], ...fp };
+        } else {
+          localParts.push(fp);
+        }
+      }
     }
-    return parts;
+
+    if (localParts.length > 0) {
+      try {
+        localStorage.setItem('spareshare_inventory', JSON.stringify(localParts));
+      } catch (e) {
+        console.warn("[DB Fallback] Failed to sync to localStorage:", e);
+      }
+    }
+    return localParts;
   } catch (error: any) {
-    console.warn("[DB Fallback] getInventory failed to read from Firestore (Quota Exceeded). Utilizing local storage copy. Error:", error.message);
-    try {
-      const local = localStorage.getItem('spareshare_inventory');
-      let localParts: SparePart[] = local ? JSON.parse(local) : [];
-      return localParts;
-    } catch (e) {
-      console.error("[DB Fallback] Failed to read from localStorage:", e);
-      return [];
-    }
+    console.warn("[DB Fallback] getInventory failed to read from Firestore. Utilizing local storage copy. Error:", error.message);
+    return localParts;
   }
 };
 
