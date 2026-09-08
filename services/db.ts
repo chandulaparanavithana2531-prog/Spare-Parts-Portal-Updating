@@ -1340,13 +1340,32 @@ export const permanentDeleteSparePart = async (partId: string, performerUsername
 };
 
 export const syncGoogleSheets = async (performerUsername: string): Promise<void> => {
-  const res = await fetch(`${API_URL}/api/sync-sheets`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: performerUsername })
-  });
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}));
-    throw new Error(errorData.error || `Failed to trigger sync: ${res.statusText}`);
+  const endpoints = [
+    `${API_URL}/api/sync-sheets`,
+    `/api/sync-sheets`,
+    `${API_URL}/sync-sheets`
+  ];
+
+  let lastError: string = '';
+
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: performerUsername })
+      });
+
+      if (res.ok) {
+        return;
+      }
+
+      const errorData = await res.json().catch(() => ({}));
+      lastError = errorData.error || errorData.message || `Server returned HTTP ${res.status}${res.statusText ? ': ' + res.statusText : ''}`;
+    } catch (err: any) {
+      lastError = err.message || 'Network error or backend server unreachable';
+    }
   }
+
+  throw new Error(lastError || 'Backend server is offline or unreachable. Please ensure the backend server (server.js) is running and VITE_API_URL is configured.');
 };

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import fs from 'fs';
 import nodemailer from 'nodemailer';
+import { syncPortalReportToSheet, syncFromSheetToPortal } from './services/googleSheets.js';
 import {
   orderEventEmitter,
   EmailQueue,
@@ -1015,7 +1016,7 @@ app.post(['/orders/created', '/api/orders/created'], async (req, res) => {
 });
 
 // REST API for triggering Google Sheets sync
-app.post(['/api/sync-sheets'], async (req, res) => {
+app.post(['/api/sync-sheets', '/sync-sheets'], async (req, res) => {
   const username = req.body.username || 'admin';
   console.log(`[Sync] Google Sheets sync triggered by user: ${username}`);
   
@@ -1144,7 +1145,33 @@ app.post(['/api/inventory/save-inventory'], async (req, res) => {
       }
     }
 
-    res.json({ success: true, message: `Successfully updated ${parts.length} items in local database.` });
+    // Real-time Master Google Sheet Sync
+    let sheetRowsUpdated = 0;
+    let sheetNewRowsAppended = 0;
+    let sheetWarning = null;
+
+    if (parts.length > 0) {
+      const plantName = parts[0].factoryId;
+      try {
+        const sheetRes = await syncPortalReportToSheet(plantName, parts);
+        sheetRowsUpdated = sheetRes.sheetRowsUpdated || 0;
+        sheetNewRowsAppended = sheetRes.sheetNewRowsAppended || 0;
+        sheetWarning = sheetRes.warning;
+      } catch (sheetErr) {
+        console.warn("[Server] Google Sheet sync error:", sheetErr.message);
+        sheetWarning = sheetErr.message;
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Successfully updated ${parts.length} items in local database.`,
+      portalUpdated: parts.length,
+      portalAdded: 0,
+      sheetRowsUpdated,
+      sheetNewRowsAppended,
+      sheetWarning
+    });
   } catch (err) {
     console.error('[Server Save-Inventory API] Error:', err);
     res.status(500).send(`Internal server error: ${err.message}`);
@@ -1909,6 +1936,23 @@ app.post(['/api/inventory/sync-upload', '/api/inventory/sync', '/api/upload', '/
       }
     }
 
+    // Real-time Master Google Sheet Sync
+    let sheetRowsUpdated = 0;
+    let sheetNewRowsAppended = 0;
+    let sheetWarning = null;
+
+    if (firestoreOps.length > 0) {
+      try {
+        const sheetRes = await syncPortalReportToSheet(plantId, firestoreOps);
+        sheetRowsUpdated = sheetRes.sheetRowsUpdated || 0;
+        sheetNewRowsAppended = sheetRes.sheetNewRowsAppended || 0;
+        sheetWarning = sheetRes.warning;
+      } catch (sheetErr) {
+        console.warn('[Sync Upload] Google Sheet sync failed:', sheetErr.message);
+        sheetWarning = sheetErr.message;
+      }
+    }
+
     res.json({
       status: 'success',
       source: detection.format,
@@ -1917,7 +1961,10 @@ app.post(['/api/inventory/sync-upload', '/api/inventory/sync', '/api/upload', '/
       items_updated: itemsUpdated,
       new_items_added: newItemsAdded,
       skipped_rows: skippedRows,
-      message: `Successfully synced ${parsedRows.length} items for ${plantId} (${newItemsAdded} new added, ${itemsUpdated} updated, ${skippedRows} skipped).`
+      sheet_rows_updated: sheetRowsUpdated,
+      sheet_new_rows_appended: sheetNewRowsAppended,
+      sheet_warning: sheetWarning,
+      message: `Successfully synced ${parsedRows.length} items for ${plantId} (${newItemsAdded} new added, ${itemsUpdated} updated, ${skippedRows} skipped). Google Sheet: ${sheetRowsUpdated} updated, ${sheetNewRowsAppended} appended.`
     });
 
   } catch (err) {

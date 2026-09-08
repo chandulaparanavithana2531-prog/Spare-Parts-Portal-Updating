@@ -374,12 +374,12 @@ export const InventorySyncModal: React.FC<InventorySyncModalProps> = ({
 
           {/* ── Progress bar (uploading phase) ── */}
           {phase === 'uploading' && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin flex-shrink-0" />
                 <div className="flex-1">
                   <div className="flex justify-between text-xs text-slate-400 font-semibold mb-1.5">
-                    <span>Syncing inventory…</span>
+                    <span>Synchronizing inventory...</span>
                     <span>{Math.round(progress)}%</span>
                   </div>
                   <div className="h-2 bg-white/10 rounded-full overflow-hidden">
@@ -393,9 +393,16 @@ export const InventorySyncModal: React.FC<InventorySyncModalProps> = ({
                   </div>
                 </div>
               </div>
-              <p className="text-xs text-slate-500 text-center">
-                Parsing rows, detecting format, and performing batch upsert…
-              </p>
+              <div className="grid grid-cols-2 gap-2 text-[11px] font-medium text-slate-400">
+                <div className="flex items-center gap-1.5 p-2 rounded-lg bg-white/5 border border-white/10">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <span>1. Updating Portal Inventory...</span>
+                </div>
+                <div className="flex items-center gap-1.5 p-2 rounded-lg bg-white/5 border border-white/10">
+                  <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+                  <span>2. Syncing to Master Google Sheet...</span>
+                </div>
+              </div>
             </div>
           )}
 
@@ -409,9 +416,9 @@ export const InventorySyncModal: React.FC<InventorySyncModalProps> = ({
               <div className="flex items-center gap-3 px-4 py-3 border-b border-emerald-500/20">
                 <CheckCircle2 className="w-5 h-5 text-emerald-400" />
                 <div className="flex-1">
-                  <p className="text-sm font-black text-emerald-300">Sync Complete</p>
+                  <p className="text-sm font-black text-emerald-300">Dual Sync Complete</p>
                   <p className="text-[11px] text-slate-400">
-                    {summary.source} export → {summary.plant}
+                    {summary.source} export → {summary.plant} &amp; Master Google Sheet
                   </p>
                 </div>
                 <div
@@ -436,7 +443,15 @@ export const InventorySyncModal: React.FC<InventorySyncModalProps> = ({
                   borderClass="border-indigo-500/25"
                 />
                 <StatCard
-                  label="New Items Added"
+                  label="Portal Items Updated"
+                  value={summary.items_updated}
+                  icon={<TrendingUp className="w-4 h-4" />}
+                  colorClass="text-sky-400"
+                  bgClass="bg-sky-500/10"
+                  borderClass="border-sky-500/25"
+                />
+                <StatCard
+                  label="Portal New Items"
                   value={summary.new_items_added}
                   icon={<Plus className="w-4 h-4" />}
                   colorClass="text-emerald-400"
@@ -444,12 +459,20 @@ export const InventorySyncModal: React.FC<InventorySyncModalProps> = ({
                   borderClass="border-emerald-500/25"
                 />
                 <StatCard
-                  label="Items Updated"
-                  value={summary.items_updated}
-                  icon={<TrendingUp className="w-4 h-4" />}
-                  colorClass="text-sky-400"
-                  bgClass="bg-sky-500/10"
-                  borderClass="border-sky-500/25"
+                  label="Sheet Rows Updated"
+                  value={summary.sheet_rows_updated ?? 0}
+                  icon={<RefreshCw className="w-4 h-4" />}
+                  colorClass="text-purple-400"
+                  bgClass="bg-purple-500/10"
+                  borderClass="border-purple-500/25"
+                />
+                <StatCard
+                  label="Sheet Appended Rows"
+                  value={summary.sheet_new_rows_appended ?? 0}
+                  icon={<Plus className="w-4 h-4" />}
+                  colorClass="text-teal-400"
+                  bgClass="bg-teal-500/10"
+                  borderClass="border-teal-500/25"
                 />
                 <StatCard
                   label="Rows Skipped"
@@ -460,6 +483,12 @@ export const InventorySyncModal: React.FC<InventorySyncModalProps> = ({
                   borderClass="border-amber-500/25"
                 />
               </div>
+
+              {summary.sheet_warning && (
+                <div className="mx-4 mb-4 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-300">
+                  ⚠️ Google Sheet Note: {summary.sheet_warning}
+                </div>
+              )}
             </div>
           )}
 

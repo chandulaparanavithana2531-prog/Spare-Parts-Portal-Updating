@@ -439,6 +439,9 @@ export interface IngestionSummary {
   items_updated: number;
   new_items_added: number;
   skipped_rows: number;
+  sheet_rows_updated?: number;
+  sheet_new_rows_appended?: number;
+  sheet_warning?: string;
   message?: string;
 }
 
@@ -518,6 +521,9 @@ export async function uploadInventorySync(
   // Try the Express server save-inventory endpoint first (writes to db.json),
   // then fall back to localStorage if the server is unreachable.
   let savedViaServer = false;
+  let sheetRowsUpdated: number | undefined = undefined;
+  let sheetNewRowsAppended: number | undefined = undefined;
+  let sheetWarning: string | undefined = undefined;
 
   const saveUrls = [
     `${API_URL}/api/inventory/save-inventory`,
@@ -532,7 +538,11 @@ export async function uploadInventorySync(
         body: JSON.stringify({ parts: partsToSave, username }),
       });
       if (res.ok) {
-        console.log(`[Inventory Sync] Saved ${partsToSave.length} items via server (${url}).`);
+        const data = await res.json().catch(() => ({}));
+        sheetRowsUpdated = data.sheetRowsUpdated ?? data.sheet_rows_updated;
+        sheetNewRowsAppended = data.sheetNewRowsAppended ?? data.sheet_new_rows_appended;
+        sheetWarning = data.sheetWarning ?? data.sheet_warning;
+        console.log(`[Inventory Sync] Saved ${partsToSave.length} items via server (${url}). Sheet: ${sheetRowsUpdated} updated, ${sheetNewRowsAppended} appended.`);
         savedViaServer = true;
         break;
       }
@@ -584,6 +594,9 @@ export async function uploadInventorySync(
     items_updated: itemsUpdated,
     new_items_added: newItemsAdded,
     skipped_rows: parseRes.skipped,
+    sheet_rows_updated: sheetRowsUpdated,
+    sheet_new_rows_appended: sheetNewRowsAppended,
+    sheet_warning: sheetWarning,
     message: `Successfully synced ${parseRes.rows.length} items for ${parseRes.plantId || plantId} (${newItemsAdded} new, ${itemsUpdated} updated, ${parseRes.skipped} skipped).`,
   };
 }

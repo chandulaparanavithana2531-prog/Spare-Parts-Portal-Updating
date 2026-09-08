@@ -17,6 +17,7 @@
     "express": "^4.19.2",
     "firebase": "^11.3.1",
     "firebase-admin": "^12.1.1",
+    "googleapis": "^178.0.0",
     "idb": "8.0.0",
     "lucide-react": "^0.563.0",
     "multer": "^1.4.5-lts.1",
