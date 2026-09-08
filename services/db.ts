@@ -2,6 +2,7 @@ import { collection, doc, writeBatch, getDocs, setDoc, getDoc, query, where, Tim
 import { db } from './firebase';
 import { SparePart, User, Order, OrderStatus, HistoricalConsumptionRecord, UploadHistoryRecord } from '../types';
 import { logAction } from './audit';
+import { resolvePlantId } from './inventorySyncService';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
@@ -200,7 +201,11 @@ export const getInventory = async (user?: User): Promise<SparePart[]> => {
   let localParts: SparePart[] = [];
   try {
     const localStr = localStorage.getItem('spareshare_inventory');
-    localParts = localStr ? JSON.parse(localStr) : [];
+    const rawLocal: SparePart[] = localStr ? JSON.parse(localStr) : [];
+    localParts = rawLocal.map(p => ({
+      ...p,
+      factoryId: resolvePlantId(p.factoryId)
+    }));
   } catch (e) {
     localParts = [];
   }
@@ -212,7 +217,10 @@ export const getInventory = async (user?: User): Promise<SparePart[]> => {
     querySnapshot.forEach((doc) => {
       const part = doc.data() as SparePart;
       if (part.is_deleted !== true) {
-        firestoreParts.push(part);
+        firestoreParts.push({
+          ...part,
+          factoryId: resolvePlantId(part.factoryId)
+        });
       }
     });
 

@@ -1,9 +1,108 @@
 import { SparePart, HistoricalConsumptionRecord } from '../types';
 import { getHistoricalConsumption } from './db';
 import { logAction } from './audit';
-import { parseInventoryFile, parseAndSyncPlantFile, IngestionSummary } from './inventorySyncService';
+import { parseInventoryFile, parseAndSyncPlantFile, resolvePlantId, IngestionSummary } from './inventorySyncService';
 
 export { parseAndSyncPlantFile };
+
+/**
+ * Merges datasets from local Firestore and backend, stripping out all duplicates.
+ * A spare part is considered duplicate if:
+ * 1. It shares the same ID (`id`).
+ * 2. It shares the same non-empty, non-placeholder Part Number (`partNumber` / `materialNumber`).
+ * 3. It shares the exact same Description (case-insensitive, trimmed) and Factory Location (`factoryId`).
+ */
+export function mergeAndDeduplicate(localParts: SparePart[], backendParts: SparePart[]): {
+  parts: SparePart[];
+  removedDuplicatesCount: number;
+} {
+  // Normalize factoryId on local parts
+  const normalizedLocalParts: SparePart[] = localParts.map(p => ({
+    ...p,
+    factoryId: resolvePlantId(p.factoryId)
+  }));
+
+  const merged: SparePart[] = [...normalizedLocalParts]; // Keep all local database parts intact
+  const seenIds = new Set<string>();
+  const seenPartNumbers = new Set<string>();
+  const seenNameAndLocation = new Set<string>();
+  let removedDuplicatesCount = 0;
+
+  // Build lookups from local database parts
+  normalizedLocalParts.forEach(part => {
+    const id = part.id ? String(part.id).trim().toLowerCase() : '';
+    const matNum = part.materialNumber ? String(part.materialNumber).trim().toLowerCase() : '';
+    const partNum = part.partNumber ? String(part.partNumber).trim().toLowerCase() : '';
+    const resolvedFactory = resolvePlantId(part.factoryId).trim().toLowerCase();
+    const nameLocKey = part.description
+      ? `${part.description.trim().toLowerCase()}||${resolvedFactory}`
+      : '';
+
+    if (id) seenIds.add(id);
+    if (matNum && matNum !== '-' && matNum !== 'n/a' && matNum !== 'none' && matNum !== '') {
+      seenPartNumbers.add(matNum);
+    }
+    if (partNum && partNum !== '-' && partNum !== 'n/a' && partNum !== 'none' && partNum !== '') {
+      seenPartNumbers.add(partNum);
+    }
+    if (nameLocKey) seenNameAndLocation.add(nameLocKey);
+  });
+
+  // Only filter duplicate items from backend parts dataset
+  backendParts.forEach(rawPart => {
+    const part: SparePart = {
+      ...rawPart,
+      factoryId: resolvePlantId(rawPart.factoryId)
+    };
+
+    const id = part.id ? String(part.id).trim().toLowerCase() : '';
+    const matNum = part.materialNumber ? String(part.materialNumber).trim().toLowerCase() : '';
+    const partNum = part.partNumber ? String(part.partNumber).trim().toLowerCase() : '';
+    const resolvedFactory = part.factoryId.trim().toLowerCase();
+    const nameLocKey = part.description
+      ? `${part.description.trim().toLowerCase()}||${resolvedFactory}`
+      : '';
+
+    let isDuplicate = false;
+
+    // 1. Check ID matching
+    if (id && seenIds.has(id)) {
+      isDuplicate = true;
+    }
+
+    // 2. Check Material / Part Number matching (ignoring placeholders)
+    if (!isDuplicate && matNum && matNum !== '-' && matNum !== 'n/a' && matNum !== 'none' && matNum !== '' && seenPartNumbers.has(matNum)) {
+      isDuplicate = true;
+    }
+    if (!isDuplicate && partNum && partNum !== '-' && partNum !== 'n/a' && partNum !== 'none' && partNum !== '' && seenPartNumbers.has(partNum)) {
+      isDuplicate = true;
+    }
+
+    // 3. Check Exact matching description and factory location
+    if (!isDuplicate && nameLocKey && seenNameAndLocation.has(nameLocKey)) {
+      isDuplicate = true;
+    }
+
+    if (!isDuplicate) {
+      merged.push(part);
+      if (id) seenIds.add(id);
+      if (matNum && matNum !== '-' && matNum !== 'n/a' && matNum !== 'none' && matNum !== '') {
+        seenPartNumbers.add(matNum);
+      }
+      if (partNum && partNum !== '-' && partNum !== 'n/a' && partNum !== 'none' && partNum !== '') {
+        seenPartNumbers.add(partNum);
+      }
+      if (nameLocKey) seenNameAndLocation.add(nameLocKey);
+    } else {
+      removedDuplicatesCount++;
+    }
+  });
+
+  return {
+    parts: merged,
+    removedDuplicatesCount
+  };
+}
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
@@ -222,81 +321,7 @@ export async function fetchBackendFactories(): Promise<FetchFactoriesResponse> {
 }
 
 
-/**
- * Merges datasets from local Firestore and backend, stripping out all duplicates.
- * A spare part is considered duplicate if:
- * 1. It shares the same ID (`id`).
- * 2. It shares the same non-empty, non-placeholder Part Number (`partNumber`).
- * 3. It shares the exact same Description (case-insensitive, trimmed) and Factory Location (`factoryId`).
- */
-export function mergeAndDeduplicate(localParts: SparePart[], backendParts: SparePart[]): {
-  parts: SparePart[];
-  removedDuplicatesCount: number;
-} {
-  const merged: SparePart[] = [...localParts]; // Keep all local database parts intact
-  const seenIds = new Set<string>();
-  const seenPartNumbers = new Set<string>();
-  const seenNameAndLocation = new Set<string>();
-  let removedDuplicatesCount = 0;
 
-  // Build lookups from local database parts
-  localParts.forEach(part => {
-    const id = part.id ? String(part.id).trim() : '';
-    const partNum = part.partNumber ? String(part.partNumber).trim().toLowerCase() : '';
-    const nameLocKey = part.description && part.factoryId
-      ? `${part.description.trim().toLowerCase()}||${part.factoryId.trim().toLowerCase()}`
-      : '';
-
-    if (id) seenIds.add(id);
-    if (partNum && partNum !== '-' && partNum !== 'n/a' && partNum !== 'none' && partNum !== '') {
-      seenPartNumbers.add(partNum);
-    }
-    if (nameLocKey) seenNameAndLocation.add(nameLocKey);
-  });
-
-  // Only filter duplicate items from backend parts dataset
-  backendParts.forEach(part => {
-    const id = part.id ? String(part.id).trim() : '';
-    const partNum = part.partNumber ? String(part.partNumber).trim().toLowerCase() : '';
-    const nameLocKey = part.description && part.factoryId
-      ? `${part.description.trim().toLowerCase()}||${part.factoryId.trim().toLowerCase()}`
-      : '';
-
-    let isDuplicate = false;
-
-    // 1. Check ID matching
-    if (id && seenIds.has(id)) {
-      isDuplicate = true;
-    }
-
-    // 2. Check Part Number matching (ignoring placeholders)
-    if (!isDuplicate && partNum && partNum !== '-' && partNum !== 'n/a' && partNum !== 'none' && partNum !== '' && seenPartNumbers.has(partNum)) {
-      isDuplicate = true;
-    }
-
-    // 3. Check Exact matching description and factory location
-    if (!isDuplicate && nameLocKey && seenNameAndLocation.has(nameLocKey)) {
-      isDuplicate = true;
-    }
-
-    if (!isDuplicate) {
-      merged.push(part);
-      if (id) seenIds.add(id);
-      if (partNum && partNum !== '-' && partNum !== 'n/a' && partNum !== 'none' && partNum !== '') {
-        seenPartNumbers.add(partNum);
-      }
-      if (nameLocKey) seenNameAndLocation.add(nameLocKey);
-    } else {
-      removedDuplicatesCount++;
-      console.log(`[Deduplication] Stripped out duplicate backend entry: "${part.description}" (ID: ${part.id || 'N/A'}, PartNo: ${part.partNumber || 'N/A'}, Factory: ${part.factoryId})`);
-    }
-  });
-
-  return {
-    parts: merged,
-    removedDuplicatesCount
-  };
-}
 
 /**
  * Fetches historical consumption records from the backend server.

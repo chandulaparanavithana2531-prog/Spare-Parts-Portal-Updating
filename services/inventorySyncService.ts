@@ -163,14 +163,14 @@ export function isInvalidItemCode(raw: any): boolean {
 /**
  * Normalises raw plant name input or plant key ('LT', 'LWT', 'RCL-H', 'RCL-E') to canonical PlantId
  */
-export function resolvePlantId(rawName: string | undefined | null, fallback: string = 'Lanka Tiles'): PlantId {
+export function resolvePlantId(rawName: string | undefined | null, fallback: string = ''): PlantId {
   if (!rawName) return (fallback || 'Lanka Tiles') as PlantId;
   const s = rawName.trim().toLowerCase();
   if (s === 'lwt' || (s.includes('lanka') && s.includes('wall'))) return 'Lanka Wall Tiles';
-  if (s === 'lt' || (s.includes('lanka') && (s.includes('tile') || s.includes('lt')))) return 'Lanka Tiles';
-  if (s === 'rcl-h' || s === 'rclh' || s.includes('horana')) return 'Rocell Horana';
-  if (s === 'rcl-e' || s === 'rcle' || s.includes('eheliyagoda') || s === 'gsc') return 'Rocell Eheliyagoda';
-  return (fallback || 'Lanka Tiles') as PlantId;
+  if (s === 'lt' || (s.includes('lanka') && s.includes('tile')) || s.includes('lanka tiles')) return 'Lanka Tiles';
+  if (s === 'rcl-h' || s === 'rclh' || s.includes('horana') || s.includes('rocell horana')) return 'Rocell Horana';
+  if (s === 'rcl-e' || s === 'rcle' || s.includes('eheliyagoda') || s.includes('rocell eheliyagoda') || s === 'gsc') return 'Rocell Eheliyagoda';
+  return (fallback || rawName) as PlantId;
 }
 
 // ---------------------------------------------------------------------------
@@ -683,11 +683,14 @@ export async function parseAndSyncPlantFile(
   const targetPlantExistingMap = new Map<string, SparePart>();
 
   for (const item of existingList) {
-    if (item.factoryId === targetPlantId) {
-      targetPlantExistingMap.set(item.materialNumber.trim().toLowerCase(), item);
-      targetPlantExistingMap.set(item.id.trim().toLowerCase(), item);
+    const itemPlantId = resolvePlantId(item.factoryId);
+    const normalizedItem: SparePart = { ...item, factoryId: itemPlantId };
+
+    if (itemPlantId === targetPlantId) {
+      targetPlantExistingMap.set(normalizedItem.materialNumber.trim().toLowerCase(), normalizedItem);
+      targetPlantExistingMap.set(normalizedItem.id.trim().toLowerCase(), normalizedItem);
     } else {
-      untouchedOtherPlantItems.push(item);
+      untouchedOtherPlantItems.push(normalizedItem);
     }
   }
 
@@ -776,6 +779,16 @@ export async function parseAndSyncPlantFile(
 
   // Save to Express REST API / Firestore
   const partsToSaveArray = Array.from(processedTargetParts.values());
+
+  try {
+    const dbModule = await import('./db.ts');
+    if (dbModule && dbModule.saveInventory) {
+      await dbModule.saveInventory(partsToSaveArray, username);
+    }
+  } catch (saveErr) {
+    console.warn('[parseAndSyncPlantFile] Firestore save error (using localStorage fallback):', saveErr);
+  }
+
   const API_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || 'http://localhost:3000';
   const saveUrls = [
     `${API_URL}/api/inventory/save-inventory`,
