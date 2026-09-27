@@ -9,12 +9,13 @@ import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import fs from 'fs';
 import nodemailer from 'nodemailer';
-import { syncPortalReportToSheet, syncFromSheetToPortal } from './services/googleSheets.js';
+import { syncPortalReportToSheet, syncFromSheetToPortal, syncOrderToSheet } from './services/googleSheets.js';
 import {
   orderEventEmitter,
   EmailQueue,
   generateCustomerConfirmationEmail,
-  generatePlantNotificationEmail
+  generatePlantNotificationEmail,
+  generateOrderStatusUpdateEmail
 } from './emailQueue.js';
 
 // Load environment variables
@@ -110,6 +111,90 @@ orderEventEmitter.on('OrderCreated', ({ order, userEmail, plantEmail, userFactor
     html: plantHtml
   };
   emailQueue.addJob(plantMailOptions);
+
+  // 4. Sync Order to Master Google Sheet ("Orders" tab)
+  syncOrderToSheet(order).catch(err => {
+    console.warn('[GoogleSheets Sync Warning] Failed to sync new order to sheet:', err.message);
+  });
+});
+
+orderEventEmitter.on('OrderStatusUpdated', ({ order, item, status, performerUsername }) => {
+  console.log(`[Event Listener] OrderStatusUpdated received for Order ID: ${order.id}, item: ${item?.sparePartDescription}, status: ${status}`);
+
+  // Send status email to user
+  if (order.requestedBy && order.requestedBy.includes('@')) {
+    const html = generateOrderStatusUpdateEmail(order, item || order.items[0], status, performerUsername);
+    const mailOptions = {
+      from: process.env.SMTP_FROM || '"SpareShare Portal" <noreply@spareshare.com>',
+      to: order.requestedBy,
+      subject: `Order Update - Ref: ${order.id} (${(status || '').toUpperCase()})`,
+      text: `Hello ${order.requestedBy},\n\nYour order ${order.id} status has been updated to ${status} by ${performerUsername}.\n\nThank you,\nSpare Parts Portal`,
+      html
+    };
+    emailQueue.addJob(mailOptions);
+  }
+
+  // Also sync updated order to Master Google Sheet
+  syncOrderToSheet(order).catch(err => {
+    console.warn('[GoogleSheets Sync Warning] Failed to sync updated order to sheet:', err.message);
+  });
+});
+
+// HTTP Endpoints for Order Events & Email Notifications
+app.post(['/api/orders/created', '/orders/created'], async (req, res) => {
+  try {
+    const { order, userEmail, plantEmail, userFactory } = req.body;
+    if (!order) return res.status(400).json({ success: false, message: 'Missing order data' });
+
+    console.log(`[Order API] Triggering OrderCreated for Order ID: ${order.id}`);
+    orderEventEmitter.emit('OrderCreated', { order, userEmail, plantEmail, userFactory });
+
+    // Sync order to Master Google Sheet ("Orders" tab)
+    const sheetRes = await syncOrderToSheet(order);
+
+    res.json({ success: true, message: 'Order created notifications queued & synced to Google Sheet', sheetSync: sheetRes });
+  } catch (err) {
+    console.error('[Order API Error]:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post(['/api/orders/status-updated', '/orders/status-updated'], async (req, res) => {
+  try {
+    const { order, item, status, performerUsername } = req.body;
+    if (!order) return res.status(400).json({ success: false, message: 'Missing order data' });
+
+    console.log(`[Order API] Triggering OrderStatusUpdated for Order ID: ${order.id}`);
+    orderEventEmitter.emit('OrderStatusUpdated', { order, item, status, performerUsername });
+
+    // Sync order update to Master Google Sheet
+    const sheetRes = await syncOrderToSheet(order);
+
+    res.json({ success: true, message: 'Order status update queued & synced to Google Sheet', sheetSync: sheetRes });
+  } catch (err) {
+    console.error('[Order Status API Error]:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post(['/api/send-email', '/send-email'], (req, res) => {
+  try {
+    const { to, subject, text, html } = req.body;
+    if (!to || !subject) return res.status(400).json({ success: false, message: 'Missing required parameters (to, subject)' });
+
+    const mailOptions = {
+      from: process.env.SMTP_FROM || '"SpareShare Portal" <noreply@spareshare.com>',
+      to,
+      subject,
+      text: text || '',
+      html
+    };
+
+    const job = emailQueue.addJob(mailOptions);
+    res.json({ success: true, jobId: job.id, message: `Email queued for ${to}` });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 // In-Memory Fallback Storage

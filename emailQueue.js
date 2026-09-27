@@ -370,3 +370,80 @@ export function generatePlantNotificationEmail(order, plantEmail, customerFactor
     </html>
   `;
 }
+
+export function generateOrderStatusUpdateEmail(order, item, newStatus, performerUsername) {
+  const timestampString = new Date().toLocaleString('en-US');
+
+  const statusColors = {
+    approved: { bg: '#dcfce7', text: '#15803d', label: 'APPROVED & RESERVED' },
+    delivered: { bg: '#dbeafe', text: '#1d4ed8', label: 'DELIVERED & FULFILLED' },
+    rejected: { bg: '#fee2e2', text: '#b91c1c', label: 'REJECTED' }
+  };
+  const statusInfo = statusColors[newStatus] || { bg: '#f3f4f6', text: '#374151', label: (newStatus || '').toUpperCase() };
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Order Status Update</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+      <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f3f4f6; padding: 40px 10px;">
+        <tr>
+          <td align="center">
+            <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
+              <tr>
+                <td style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 36px 30px; text-align: center; color: #ffffff;">
+                  <h1 style="margin: 0; font-size: 22px; font-weight: 800;">SpareShare Order Status Update</h1>
+                  <p style="margin: 8px 0 0 0; font-size: 14px; color: #94a3b8;">Order Ref: ${order.id}</p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 30px;">
+                  <p style="margin: 0 0 16px 0; font-size: 15px; color: #334155;">
+                    Hello <strong>${order.requestedBy}</strong>,
+                  </p>
+                  <p style="margin: 0 0 20px 0; font-size: 14px; color: #475569; line-height: 1.6;">
+                    The status of your requested spare part item in Order <strong>${order.id}</strong> has been updated by <strong>${performerUsername}</strong>:
+                  </p>
+
+                  <div style="background-color: ${statusInfo.bg}; border-radius: 12px; padding: 16px; text-align: center; margin-bottom: 24px;">
+                    <span style="font-size: 16px; font-weight: 800; color: ${statusInfo.text}; letter-spacing: 0.05em;">
+                      ${statusInfo.label}
+                    </span>
+                  </div>
+
+                  <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; margin-bottom: 24px;">
+                    <tr>
+                      <td style="padding: 8px 0; color: #64748b; width: 40%;">Item Description</td>
+                      <td style="padding: 8px 0; font-weight: 600; color: #0f172a;">${item.sparePartDescription}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; color: #64748b;">Quantity</td>
+                      <td style="padding: 8px 0; font-weight: 600; color: #0f172a;">${item.quantity}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; color: #64748b;">Source Plant</td>
+                      <td style="padding: 8px 0; font-weight: 600; color: #2563eb;">${item.fromFactory}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; color: #64748b;">Updated At</td>
+                      <td style="padding: 8px 0; color: #64748b;">${timestampString}</td>
+                    </tr>
+                  </table>
+
+                  <div style="border-top: 1px solid #e2e8f0; padding-top: 20px; text-align: center; color: #94a3b8; font-size: 12px;">
+                    © ${new Date().getFullYear()} SpareShare Inter-Factory Portal. All rights reserved.
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+}
+

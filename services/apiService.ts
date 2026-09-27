@@ -487,9 +487,52 @@ export async function notifyOrderCreated(eventData: {
   }
 }
 
+/**
+ * Notifies the backend that an order status has been updated (e.g. approved, delivered, rejected).
+ */
+export async function notifyOrderStatusUpdated(eventData: {
+  order: any;
+  item?: any;
+  status: string;
+  performerUsername: string;
+}): Promise<{ success: boolean; message?: string }> {
+  try {
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    console.log(`[API Service] Notifying backend of OrderStatusUpdated for order: ${eventData.order.id}`);
+
+    let response = await fetch(`${API_URL}/api/orders/status-updated`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(eventData),
+    });
+
+    if (!response.ok && response.status === 404) {
+      response = await fetch(`${API_URL}/orders/status-updated`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(eventData),
+      });
+    }
+
+    if (!response.ok) {
+      throw new Error(`Server returned status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.warn(`[API Service] Failed to notify backend of OrderStatusUpdated event. Error:`, error);
+    return { success: false, message: String(error) };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Inventory Sync Upload — SAP & Oracle auto-detect endpoint
 // ---------------------------------------------------------------------------
 
 export type { IngestionSummary };
+
 

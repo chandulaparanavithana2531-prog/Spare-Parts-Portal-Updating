@@ -593,6 +593,16 @@ export const processOrderItem = async (orderId: string, itemPartId: string, stat
       `${status === 'rejected' ? 'Rejected' : 'Reset'} item: ${item.sparePartDescription}`
     );
   }
+
+  // Notify backend of order status update (triggers email & Google Sheet order sync)
+  try {
+    const { notifyOrderStatusUpdated } = await import('./apiService');
+    notifyOrderStatusUpdated({ order, item, status, performerUsername }).catch(err => {
+      console.warn('[DB] Failed to notify backend of order status update:', err);
+    });
+  } catch (err) {
+    console.warn('[DB] Dynamic import of notifyOrderStatusUpdated failed:', err);
+  }
 };
 
 // --- Auth ---

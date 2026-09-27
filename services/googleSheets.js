@@ -2,7 +2,7 @@ import { google } from 'googleapis';
 import fs from 'fs';
 import path from 'path';
 
-const DEFAULT_SPREADSHEET_ID = '1EzsyACHF2VPOmP_oXYrTmZ-dV7F3XMQjOn1Qh0ocfJc';
+const DEFAULT_SPREADSHEET_ID = '1E6_a2TKNTETg7nk0qJbcU1VZfZhgf4ai9AlCAOPM0nw';
 
 /**
  * Get Google Sheets API client using Service Account credentials from environment.
@@ -223,3 +223,100 @@ export async function syncFromSheetToPortal() {
     });
   });
 }
+
+/**
+ * Append or update an Order record in the "Orders" sheet tab of the Master Google Spreadsheet.
+ * 
+ * @param {Object} order - Order object containing id, requestedBy, items, status, createdAt, etc.
+ * @returns {Promise<{ success: boolean, message?: string }>}
+ */
+export async function syncOrderToSheet(order) {
+  if (!order || !order.items || order.items.length === 0) {
+    return { success: false, message: 'No items in order' };
+  }
+
+  const sheets = getGoogleSheetsClient();
+  const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID || DEFAULT_SPREADSHEET_ID;
+
+  if (!sheets) {
+    console.warn('[GoogleSheets] Service account credentials not configured. Skipping Order sheet sync.');
+    return { success: false, message: 'Credentials not configured' };
+  }
+
+  try {
+    const sheetName = 'Orders';
+
+    // 1. Ensure sheet exists, if not create tab with headers
+    let response;
+    try {
+      response = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${sheetName}'!A:K`,
+      });
+    } catch (err) {
+      // If sheet doesn't exist, attempt to add sheet tab
+      try {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [{ addSheet: { properties: { title: sheetName } } }]
+          }
+        });
+
+        // Add headers
+        const headers = [
+          'Order ID', 'Date & Time', 'Requested By', 'Fulfillment Plant',
+          'Item Material No.', 'Item Description', 'Quantity', 'Unit Cost (Rs.)',
+          'Total Value (Rs.)', 'Status', 'Updated At'
+        ];
+        await sheets.spreadsheets.values.append({
+          spreadsheetId,
+          range: `'${sheetName}'!A1`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: { values: [headers] }
+        });
+
+        response = { data: { values: [headers] } };
+      } catch (createErr) {
+        console.warn(`[GoogleSheets] Could not create sheet "${sheetName}": ${createErr.message}`);
+        return { success: false, message: createErr.message };
+      }
+    }
+
+    const rows = response.data.values || [];
+    const timestampStr = new Date(order.createdAt || Date.now()).toLocaleString('en-US');
+    const updatedAtStr = new Date().toLocaleString('en-US');
+    const requestedBy = order.requestedBy || 'Unknown User';
+    const sourcePlant = order.items[0]?.fromFactory || 'Unknown Plant';
+
+    const newRows = order.items.map(item => [
+      order.id,
+      timestampStr,
+      requestedBy,
+      sourcePlant,
+      item.sparePartId ? item.sparePartId.split('-')[1] || item.sparePartId : 'N/A',
+      item.sparePartDescription || '',
+      item.quantity || 1,
+      item.unitCost || 0,
+      item.totalValue || ((item.unitCost || 0) * (item.quantity || 1)),
+      item.status || order.status || 'pending',
+      updatedAtStr
+    ]);
+
+    // Append rows to 'Orders' sheet
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `'${sheetName}'!A:K`,
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: newRows }
+    });
+
+    console.log(`[GoogleSheets] Successfully synced ${newRows.length} order items for Order ${order.id} to Master Google Sheet ("${sheetName}").`);
+    return { success: true };
+  } catch (err) {
+    console.error(`[GoogleSheets Error] syncOrderToSheet failed for order ${order?.id}:`, err.message);
+    return { success: false, message: err.message };
+  }
+}
+
