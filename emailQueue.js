@@ -447,3 +447,62 @@ export function generateOrderStatusUpdateEmail(order, item, newStatus, performer
   `;
 }
 
+export function generate2FAEmail(username, otpCode) {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>2-Step Verification Code</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+      <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f3f4f6; padding: 40px 10px;">
+        <tr>
+          <td align="center">
+            <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 520px; background-color: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1);">
+              <tr>
+                <td style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%); padding: 36px 30px; text-align: center; color: #ffffff;">
+                  <div style="background: rgba(255,255,255,0.2); width: 56px; height: 56px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px; font-size: 28px;">
+                    🛡️
+                  </div>
+                  <h1 style="margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.02em;">2-Step Verification Required</h1>
+                  <p style="margin: 6px 0 0 0; font-size: 14px; color: #bfdbfe;">SpareShare Security Authentication</p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 32px 30px;">
+                  <p style="margin: 0 0 16px 0; font-size: 15px; color: #374151; line-height: 1.6;">
+                    Hello <strong>${username}</strong>,
+                  </p>
+                  <p style="margin: 0 0 24px 0; font-size: 14px; color: #4b5563; line-height: 1.6;">
+                    You are signing into the SpareShare Inter-Factory Portal. Please use the following 6-digit verification passcode to complete your login:
+                  </p>
+
+                  <div style="background: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 16px; padding: 20px; text-align: center; margin-bottom: 24px;">
+                    <div style="font-size: 36px; font-weight: 900; letter-spacing: 0.3em; color: #1e3a8a; font-family: monospace;">
+                      ${otpCode}
+                    </div>
+                    <p style="margin: 8px 0 0 0; font-size: 12px; color: #64748b; font-weight: 600;">
+                      ⏱️ Valid for 5 minutes • Do not share this code
+                    </p>
+                  </div>
+
+                  <p style="margin: 0 0 20px 0; font-size: 13px; color: #6b7280; line-height: 1.5; text-align: center;">
+                    This passcode was dispatched from <strong>sparevone@gmail.com</strong>. If you did not request this code, please ignore this email or notify your system administrator.
+                  </p>
+
+                  <div style="border-top: 1px solid #e5e7eb; padding-top: 20px; text-align: center; color: #9ca3af; font-size: 12px;">
+                    © ${new Date().getFullYear()} SpareShare Operations Network • All rights reserved.
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+}
+
+
