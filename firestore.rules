@@ -50,5 +50,9 @@ service cloud.firestore {
     match /upload_history/{historyId} {
       allow read, write: if true;
     }
+
+    match /otp_store/{docId} {
+      allow read, write, delete: if true; // OTPs are short-lived (5 min) and written by server functions
+    }
   }
 }
