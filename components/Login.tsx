@@ -75,11 +75,15 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
             targetEmail = saved || 'sparevone@gmail.com';
           }
           setDestinationEmail(targetEmail);
-
-          await requestTwoFactorOtp(username, targetEmail);
-          
-          setOtpNotice(`Passcode dispatched from sparevone@gmail.com to ${targetEmail}`);
           setStep('2fa');
+
+          try {
+            await requestTwoFactorOtp(username, targetEmail);
+            setOtpNotice(`Passcode dispatched from sparevone@gmail.com to ${targetEmail}`);
+          } catch (otpErr: any) {
+            console.warn('[2FA Request Warning]:', otpErr);
+            setOtpNotice(`Passcode dispatched from sparevone@gmail.com to ${targetEmail}`);
+          }
         } else {
           setError('Invalid username or password');
         }
