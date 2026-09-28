@@ -534,13 +534,21 @@ export async function notifyOrderStatusUpdated(eventData: {
  */
 export async function requestTwoFactorOtp(username: string, email?: string): Promise<{ success: boolean; message?: string; otpCode?: string }> {
   try {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
     const targetEmail = email || (username.includes('@') ? username : 'sparevone@gmail.com');
-    const response = await fetch(`${API_URL}/api/auth/send-otp`, {
+    let response = await fetch('/api/send-otp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, email: targetEmail }),
     });
+
+    if (!response.ok && response.status === 404) {
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+      response = await fetch(`${API_URL}/api/auth/send-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, email: targetEmail }),
+      });
+    }
 
     let resData = await response.json();
     if (!response.ok) throw new Error(resData.message || 'Failed to send OTP code');
@@ -561,12 +569,20 @@ export async function requestTwoFactorOtp(username: string, email?: string): Pro
  */
 export async function verifyTwoFactorOtp(username: string, code: string): Promise<{ success: boolean; message?: string }> {
   try {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-    const response = await fetch(`${API_URL}/api/auth/verify-otp`, {
+    let response = await fetch('/api/verify-otp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, code }),
     });
+
+    if (!response.ok && response.status === 404) {
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+      response = await fetch(`${API_URL}/api/auth/verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, code }),
+      });
+    }
 
     let resData = await response.json();
     if (response.ok && resData.success) {
