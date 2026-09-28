@@ -66,19 +66,20 @@ try {
   console.warn('[Firebase] Firebase Admin could not initialize (likely missing credentials). Using in-memory storage fallback.', error.message);
 }
 
-// Configure Email Transporter
+// Configure Email Transporter (Default sender: sparevone@gmail.com)
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.ethereal.email',
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
   port: parseInt(process.env.SMTP_PORT || '587', 10),
+  secure: process.env.SMTP_SECURE === 'true',
   auth: {
-    user: process.env.SMTP_USER || 'ethereal.user',
-    pass: process.env.SMTP_PASS || 'ethereal.pass'
+    user: process.env.SMTP_USER || 'sparevone@gmail.com',
+    pass: process.env.SMTP_PASS || ''
   }
 });
 
-const isMockEmail = !process.env.SMTP_USER || process.env.SMTP_USER === 'ethereal.user';
+const isMockEmail = !process.env.SMTP_PASS || process.env.SMTP_USER === 'ethereal.user';
 if (isMockEmail) {
-  console.warn('[Email] SMTP credentials are not configured. Running in Mock Mode (emails print to console).');
+  console.warn('[Email] SMTP credentials (SMTP_PASS) are not configured. Running in Mock Mode with sender sparevone@gmail.com (emails print to console).');
 }
 
 // Initialize global EmailQueue and register event listener
@@ -809,7 +810,7 @@ app.post(['/send-email', '/api/send-email'], async (req, res) => {
   }
 
   const mailOptions = {
-    from: process.env.SMTP_FROM || '"SpareShare Portal" <noreply@spareshare.com>',
+    from: process.env.SMTP_FROM || '"SpareShare Portal" <sparevone@gmail.com>',
     to,
     subject,
     text,

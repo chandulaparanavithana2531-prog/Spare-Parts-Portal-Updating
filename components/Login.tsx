@@ -24,6 +24,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
   // 2-Step Verification state
   const [pendingUser, setPendingUser] = useState<User | null>(null);
+  const [destinationEmail, setDestinationEmail] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [otpNotice, setOtpNotice] = useState('');
 
@@ -39,12 +40,12 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
     try {
       if (isRegistering) {
-        // Validate Username
-        const isEmail = /^[a-zA-Z0-9._%+-]+@gmail\.com$/i.test(username);
+        // Validate Username/Email
+        const isEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/i.test(username);
         const isAdmin = username.toLowerCase() === 'admin';
         
         if (!isEmail && !isAdmin) {
-          setError('Username must be a valid @gmail.com address, unless registering as admin.');
+          setError('Username must be a valid email address (e.g. user@company.com), unless registering as admin.');
           setLoading(false);
           return;
         }
@@ -52,6 +53,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         // Register
         const newUser: User = {
           username,
+          email: isEmail ? username : undefined,
           role: 'user',
           factoryAffiliation: selectedFactory,
           approved: false
@@ -67,8 +69,14 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         if (user) {
           // Step 2: Trigger 2-Step Verification Email from sparevone@gmail.com
           setPendingUser(user);
-          const targetEmail = username.includes('@') ? username : 'sparevone@gmail.com';
-          const otpRes = await requestTwoFactorOtp(username, targetEmail);
+          let targetEmail = user.email || (username.includes('@') ? username : '');
+          if (!targetEmail) {
+            const saved = localStorage.getItem(`spareshare_email_${username.toLowerCase()}`);
+            targetEmail = saved || 'sparevone@gmail.com';
+          }
+          setDestinationEmail(targetEmail);
+
+          await requestTwoFactorOtp(username, targetEmail);
           
           setOtpNotice(`Passcode dispatched from sparevone@gmail.com to ${targetEmail}`);
           setStep('2fa');
@@ -101,7 +109,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     try {
       const verifyRes = await verifyTwoFactorOtp(username, otpCode);
       if (verifyRes.success && pendingUser) {
-        onLogin(pendingUser);
+        onLogin({ ...pendingUser, email: destinationEmail || pendingUser.email, twoFactorVerified: true });
       } else {
         setError(verifyRes.message || 'Invalid or expired 2-step verification code.');
       }
@@ -112,13 +120,16 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     }
   };
 
-  const handleResendOtp = async () => {
+  const handleResendOtp = async (customEmail?: string) => {
     setLoading(true);
     setError('');
+    const targetEmail = customEmail || destinationEmail || (username.includes('@') ? username : 'sparevone@gmail.com');
     try {
-      const targetEmail = username.includes('@') ? username : 'sparevone@gmail.com';
+      if (targetEmail && !username.includes('@')) {
+        localStorage.setItem(`spareshare_email_${username.toLowerCase()}`, targetEmail);
+      }
       await requestTwoFactorOtp(username, targetEmail);
-      setOtpNotice(`New verification code sent from sparevone@gmail.com to ${targetEmail}`);
+      setOtpNotice(`Passcode dispatched from sparevone@gmail.com to ${targetEmail}`);
     } catch (err: any) {
       setError('Failed to resend code. Please try again.');
     } finally {
@@ -159,7 +170,42 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 </div>
                 <h3 className="text-sm font-bold text-gray-900">Passcode Required</h3>
                 <p className="text-xs text-gray-600 font-medium leading-relaxed">
-                  We've dispatched a 6-digit verification passcode from <strong className="text-blue-700">sparevone@gmail.com</strong> to your registered email address.
+                  We've dispatched a 6-digit verification passcode from <strong className="text-blue-700">sparevone@gmail.com</strong>.
+                </p>
+              </div>
+
+              {/* Destination Email Selector / Input */}
+              <div className="space-y-1.5 bg-gray-50 border border-gray-200 p-3 rounded-xl">
+                <label htmlFor="destinationEmail" className="block text-[11px] font-bold text-gray-700 uppercase tracking-wider">
+                  Receiving Email Address
+                </label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1 rounded-lg border border-gray-300 bg-white shadow-sm">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Mail className="h-4 w-4 text-gray-400" />
+                    </div>
+                    <input
+                      id="destinationEmail"
+                      type="email"
+                      required
+                      value={destinationEmail}
+                      onChange={(e) => setDestinationEmail(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 text-xs text-gray-900 bg-transparent rounded-lg focus:outline-none font-semibold"
+                      placeholder="e.g. user@company.com"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleResendOtp(destinationEmail)}
+                    disabled={loading || !destinationEmail}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shrink-0 flex items-center gap-1 cursor-pointer disabled:opacity-50 shadow-sm"
+                    title="Send code to this email"
+                  >
+                    <RefreshCw className="w-3 h-3" /> Send
+                  </button>
+                </div>
+                <p className="text-[10px] text-gray-500 font-medium">
+                  Enter your email address above to receive the 2FA passcode via sparevone@gmail.com
                 </p>
               </div>
 
@@ -222,7 +268,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 <div className="flex items-center justify-between gap-2 pt-2 border-t border-gray-100">
                   <button
                     type="button"
-                    onClick={handleResendOtp}
+                    onClick={() => handleResendOtp()}
                     disabled={loading}
                     className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >

@@ -100,7 +100,7 @@ export class EmailQueue {
       // Check if we are running in mock/console mode
       const isMockEmail = !this.transporter || 
         (this.transporter.options && 
-         (this.transporter.options.host === 'smtp.ethereal.email' || !this.transporter.options.auth?.user));
+         (this.transporter.options.host === 'smtp.ethereal.email' || !this.transporter.options.auth?.pass));
 
       if (isMockEmail) {
         clearTimeout(timeout);
@@ -462,8 +462,8 @@ export function generate2FAEmail(username, otpCode) {
             <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 520px; background-color: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1);">
               <tr>
                 <td style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%); padding: 36px 30px; text-align: center; color: #ffffff;">
-                  <div style="background: rgba(255,255,255,0.2); width: 56px; height: 56px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px; font-size: 28px;">
-                    🛡️
+                  <div style="background: rgba(255,255,255,0.2); width: 56px; height: 56px; border-radius: 50%; display: inline-block; line-height: 56px; text-align: center; margin-bottom: 12px; font-size: 28px;">
+                    &#128737;
                   </div>
                   <h1 style="margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.02em;">2-Step Verification Required</h1>
                   <p style="margin: 6px 0 0 0; font-size: 14px; color: #bfdbfe;">SpareShare Security Authentication</p>
@@ -483,7 +483,7 @@ export function generate2FAEmail(username, otpCode) {
                       ${otpCode}
                     </div>
                     <p style="margin: 8px 0 0 0; font-size: 12px; color: #64748b; font-weight: 600;">
-                      ⏱️ Valid for 5 minutes • Do not share this code
+                      &#9201; Valid for 5 minutes &bull; Do not share this code
                     </p>
                   </div>
 

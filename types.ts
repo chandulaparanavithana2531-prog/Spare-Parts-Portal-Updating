@@ -70,9 +70,11 @@ export type UserRole = 'admin' | 'user';
 
 export interface User {
   username: string;
+  email?: string;
   role: UserRole;
   factoryAffiliation?: string; // If a user belongs to a specific factory
   approved: boolean;
+  twoFactorVerified?: boolean;
 }
 
 export type OrderStatus = 'pending' | 'approved' | 'rejected' | 'delivered';

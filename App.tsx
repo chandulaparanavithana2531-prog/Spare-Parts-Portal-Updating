@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Upload, Search, LayoutDashboard, SlidersHorizontal, Sparkles, CheckCircle, RefreshCw, Database, FileSpreadsheet, LogOut, ShoppingBag, ShoppingCart, Plus, Trash2, ShieldAlert, Sun, Moon, LogIn, Globe, ArrowRight, Menu, X, Building2 } from 'lucide-react';
+import { Upload, Search, LayoutDashboard, SlidersHorizontal, Sparkles, CheckCircle, RefreshCw, Database, FileSpreadsheet, LogOut, ShoppingBag, ShoppingCart, Plus, Trash2, ShieldAlert, Sun, Moon, LogIn, Globe, ArrowRight, Menu, X, Building2, ShieldCheck } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 import { parseExcelFile, parseSystemReport } from './services/excelService';
@@ -514,11 +514,15 @@ function App() {
     const savedUser = sessionStorage.getItem('spareshare_currentUser');
     if (savedUser) {
       try {
-        return JSON.parse(savedUser);
+        const parsed = JSON.parse(savedUser);
+        if (parsed && parsed.twoFactorVerified) {
+          return parsed;
+        }
       } catch (e) {
         console.error("Failed to parse saved user from sessionStorage", e);
       }
     }
+    sessionStorage.removeItem('spareshare_currentUser');
     return null;
   });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
@@ -1371,6 +1375,10 @@ Ensure the Excel format is correct and you have a stable internet connection.
     );
   };
 
+  if (!currentUser) {
+    return <Login onLogin={(user) => setCurrentUser(user)} />;
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
       {/* Mobile Drawer Navigation (Backdrop + Content) */}
@@ -1491,8 +1499,13 @@ Ensure the Excel format is correct and you have a stable internet connection.
                   {currentUser.username.substring(0, 2)}
                 </div>
                 <div className="text-left min-w-0 flex-1">
-                  <p className="text-xs font-bold text-gray-900 truncate leading-tight">{currentUser.username}</p>
-                  <p className="text-[10px] text-gray-400 font-semibold truncate leading-none mt-0.5 capitalize">{currentUser.role}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-xs font-bold text-gray-900 truncate leading-tight">{currentUser.username}</p>
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700 shrink-0">
+                      <ShieldCheck className="w-3 h-3 text-green-600" /> 2FA
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-gray-400 font-semibold truncate leading-none mt-0.5 capitalize">{currentUser.role} • sparevone@gmail.com</p>
                 </div>
               </div>
 
@@ -1634,8 +1647,13 @@ Ensure the Excel format is correct and you have a stable internet connection.
             </div>
             {!isSidebarCollapsed && (
               <div className="text-left min-w-0 flex-1 animate-in fade-in duration-200">
-                <p className="text-xs font-bold text-gray-900 truncate leading-tight">{currentUser.username}</p>
-                <p className="text-[10px] text-gray-400 font-semibold truncate leading-none mt-0.5 capitalize">{currentUser.role}</p>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-bold text-gray-900 truncate leading-tight">{currentUser.username}</p>
+                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700 shrink-0">
+                    <ShieldCheck className="w-3 h-3 text-green-600" /> 2FA
+                  </span>
+                </div>
+                <p className="text-[10px] text-gray-400 font-semibold truncate leading-none mt-0.5 capitalize">{currentUser.role} • sparevone@gmail.com</p>
               </div>
             )}
           </div>
