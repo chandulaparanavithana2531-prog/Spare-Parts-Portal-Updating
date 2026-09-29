@@ -124,16 +124,12 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     }
   };
 
-  const handleResendOtp = async (customEmail?: string) => {
+  const handleResendOtp = async () => {
     setLoading(true);
     setError('');
-    const targetEmail = customEmail || destinationEmail || (username.includes('@') ? username : 'sparevone@gmail.com');
     try {
-      if (targetEmail && !username.includes('@')) {
-        localStorage.setItem(`spareshare_email_${username.toLowerCase()}`, targetEmail);
-      }
-      await requestTwoFactorOtp(username, targetEmail);
-      setOtpNotice(`Passcode dispatched from sparevone@gmail.com to ${targetEmail}`);
+      await requestTwoFactorOtp(username, destinationEmail);
+      setOtpNotice(`Passcode re-sent to ${destinationEmail}`);
     } catch (err: any) {
       setError('Failed to resend code. Please try again.');
     } finally {
@@ -178,39 +174,13 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 </p>
               </div>
 
-              {/* Destination Email Selector / Input */}
-              <div className="space-y-1.5 bg-gray-50 border border-gray-200 p-3 rounded-xl">
-                <label htmlFor="destinationEmail" className="block text-[11px] font-bold text-gray-700 uppercase tracking-wider">
-                  Receiving Email Address
-                </label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1 rounded-lg border border-gray-300 bg-white shadow-sm">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <Mail className="h-4 w-4 text-gray-400" />
-                    </div>
-                    <input
-                      id="destinationEmail"
-                      type="email"
-                      required
-                      value={destinationEmail}
-                      onChange={(e) => setDestinationEmail(e.target.value)}
-                      className="w-full pl-9 pr-3 py-1.5 text-xs text-gray-900 bg-transparent rounded-lg focus:outline-none font-semibold"
-                      placeholder="e.g. user@company.com"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleResendOtp(destinationEmail)}
-                    disabled={loading || !destinationEmail}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shrink-0 flex items-center gap-1 cursor-pointer disabled:opacity-50 shadow-sm"
-                    title="Send code to this email"
-                  >
-                    <RefreshCw className="w-3 h-3" /> Send
-                  </button>
+              {/* Destination Email — read-only, always the user's registered email */}
+              <div className="flex items-center gap-2.5 bg-gray-50 border border-gray-200 px-3 py-2.5 rounded-xl">
+                <Mail className="h-4 w-4 text-blue-500 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Passcode sent to</p>
+                  <p className="text-xs font-semibold text-gray-900 truncate">{destinationEmail}</p>
                 </div>
-                <p className="text-[10px] text-gray-500 font-medium">
-                  Enter your email address above to receive the 2FA passcode via sparevone@gmail.com
-                </p>
               </div>
 
               <div>
@@ -272,7 +242,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 <div className="flex items-center justify-between gap-2 pt-2 border-t border-gray-100">
                   <button
                     type="button"
-                    onClick={() => handleResendOtp()}
+                    onClick={handleResendOtp}
                     disabled={loading}
                     className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >
