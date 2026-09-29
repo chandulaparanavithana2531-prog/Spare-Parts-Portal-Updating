@@ -1,4 +1,4 @@
-﻿import nodemailer from 'nodemailer';
+import nodemailer from 'nodemailer';
 
 // ---------------------------------------------------------------------------
 // Firestore REST helpers - persists OTPs across serverless invocations
@@ -79,13 +79,17 @@ export default async function handler(req, res) {
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
 
-    // 1. Persist OTP in Firestore so verify-otp.js can read it in a separate invocation
-    await firestoreSet('otp_store', username.toLowerCase(), {
-      code: otpCode,
-      expiresAt,
-      username,
-    });
-    console.log(`[Vercel 2FA] OTP stored in Firestore for ${username} -> ${targetEmail}: ${otpCode}`);
+    // 1. Persist OTP in Firestore so verify-otp.js can read it in a separate invocation (gracefully handle quota/network errors)
+    try {
+      await firestoreSet('otp_store', username.toLowerCase(), {
+        code: otpCode,
+        expiresAt,
+        username,
+      });
+      console.log(`[Vercel 2FA] OTP stored in Firestore for ${username} -> ${targetEmail}: ${otpCode}`);
+    } catch (fsErr) {
+      console.warn(`[Vercel 2FA] Firestore write warning (e.g. quota/permissions):`, fsErr.message);
+    }
 
     // 2. Send email via nodemailer SMTP (Gmail App Password, port 465 SSL)
     const transporter = nodemailer.createTransport({

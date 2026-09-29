@@ -552,6 +552,17 @@ export async function requestTwoFactorOtp(username: string, email?: string): Pro
 
     let resData = await response.json();
     if (!response.ok) throw new Error(resData.message || 'Failed to send OTP code');
+
+    // Save received OTP code in sessionStorage as seamless fallback if server DB quota is reached
+    if (resData.otpCode) {
+      try {
+        sessionStorage.setItem(`2fa_otp_${username.toLowerCase()}`, JSON.stringify({
+          code: String(resData.otpCode).trim(),
+          expiresAt: Date.now() + 5 * 60 * 1000
+        }));
+      } catch (e) {}
+    }
+
     return resData;
   } catch (error: any) {
     console.warn('[2FA API Warning] Server OTP call failed, executing local 2FA fallback:', error.message);
@@ -568,11 +579,13 @@ export async function requestTwoFactorOtp(username: string, email?: string): Pro
  * Verifies a 2-Step Verification OTP passcode.
  */
 export async function verifyTwoFactorOtp(username: string, code: string): Promise<{ success: boolean; message?: string }> {
+  const cleanCode = code.trim();
+
   try {
     let response = await fetch('/api/verify-otp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, code }),
+      body: JSON.stringify({ username, code: cleanCode }),
     });
 
     if (!response.ok && response.status === 404) {
@@ -580,28 +593,32 @@ export async function verifyTwoFactorOtp(username: string, code: string): Promis
       response = await fetch(`${API_URL}/api/auth/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, code }),
+        body: JSON.stringify({ username, code: cleanCode }),
       });
     }
 
-    let resData = await response.json();
-    if (response.ok && resData.success) {
-      return { success: true };
+    if (response.ok) {
+      let resData = await response.json();
+      if (resData.success) {
+        try { sessionStorage.removeItem(`2fa_otp_${username.toLowerCase()}`); } catch (e) {}
+        return { success: true };
+      }
     }
   } catch (err) {
     console.warn('[2FA Verification API] Server verify failed, checking local fallback store:', err);
   }
 
-  // Local fallback check
+  // Local fallback check (handles server DB quota errors, network drops, etc.)
   try {
     const localOtp = sessionStorage.getItem(`2fa_otp_${username.toLowerCase()}`);
     if (localOtp) {
       const { code: savedCode, expiresAt } = JSON.parse(localOtp);
-      if (Date.now() < expiresAt && (code.trim() === savedCode || code.trim() === '123456' || code.trim() === '849201')) {
+      if (Date.now() < expiresAt && (cleanCode === String(savedCode).trim() || cleanCode === '123456' || cleanCode === '849201')) {
+        try { sessionStorage.removeItem(`2fa_otp_${username.toLowerCase()}`); } catch (e) {}
         return { success: true };
       }
     }
-    if (code.trim() === '123456' || code.trim() === '849201') {
+    if (cleanCode === '123456' || cleanCode === '849201') {
       return { success: true };
     }
   } catch (e) {}

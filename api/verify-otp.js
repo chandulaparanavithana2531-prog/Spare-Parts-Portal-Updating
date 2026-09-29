@@ -53,7 +53,12 @@ export default async function handler(req, res) {
     }
 
     // Read OTP from Firestore (persists across serverless invocations)
-    const record = await firestoreGet('otp_store', key);
+    let record = null;
+    try {
+      record = await firestoreGet('otp_store', key);
+    } catch (fsErr) {
+      console.warn('[Vercel 2FA] Firestore read error:', fsErr.message);
+    }
 
     if (!record) {
       return res.status(400).json({ success: false, message: 'Invalid or expired verification code.' });
