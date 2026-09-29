@@ -1,7 +1,7 @@
-import { google } from 'googleapis';
+﻿import nodemailer from 'nodemailer';
 
 // ---------------------------------------------------------------------------
-// Firestore REST helpers — no Admin SDK needed, uses project ID + web API key
+// Firestore REST helpers - persists OTPs across serverless invocations
 // ---------------------------------------------------------------------------
 const FIREBASE_PROJECT_ID = process.env.VITE_FIREBASE_PROJECT_ID || 'spareshare-33986';
 const FIREBASE_WEB_API_KEY = process.env.VITE_FIREBASE_API_KEY || 'AIzaSyAMl2OrlGj_O9qeh02KeKuw6lA_pZLG4XM';
@@ -25,69 +25,6 @@ async function firestoreSet(collection, docId, data) {
     throw new Error(`Firestore write failed (${response.status}): ${errText}`);
   }
   return response.json();
-}
-
-// ---------------------------------------------------------------------------
-// Gmail REST API via Google Service Account (domain-wide delegation)
-// ---------------------------------------------------------------------------
-function getGmailAuthClient() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  let privateKey = process.env.GOOGLE_PRIVATE_KEY;
-
-  if (!email || !privateKey) {
-    throw new Error(
-      'Missing GOOGLE_SERVICE_ACCOUNT_EMAIL or GOOGLE_PRIVATE_KEY. ' +
-      'Set these in Vercel Project Settings > Environment Variables.'
-    );
-  }
-
-  // Vercel env vars often have literal \\n — fix them back to real newlines
-  privateKey = privateKey.replace(/\\n/g, '\n');
-
-  const gmailSender = process.env.SMTP_USER || 'sparevone@gmail.com';
-
-  return new google.auth.JWT({
-    email,
-    key: privateKey,
-    scopes: ['https://www.googleapis.com/auth/gmail.send'],
-    subject: gmailSender, // Impersonate the sender (requires domain-wide delegation on the service account)
-  });
-}
-
-function buildRawEmail({ from, to, subject, html, text }) {
-  const boundary = `boundary_${Date.now()}`;
-  const lines = [
-    `From: ${from}`,
-    `To: ${to}`,
-    `Subject: ${subject}`,
-    'MIME-Version: 1.0',
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
-    '',
-    `--${boundary}`,
-    'Content-Type: text/plain; charset=utf-8',
-    '',
-    text || '',
-    '',
-    `--${boundary}`,
-    'Content-Type: text/html; charset=utf-8',
-    '',
-    html || '',
-    '',
-    `--${boundary}--`,
-  ];
-  const raw = lines.join('\r\n');
-  return Buffer.from(raw).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-async function sendViaGmailApi({ from, to, subject, html, text }) {
-  const auth = getGmailAuthClient();
-  const gmail = google.gmail({ version: 'v1', auth });
-  const raw = buildRawEmail({ from, to, subject, html, text });
-  const result = await gmail.users.messages.send({
-    userId: 'me',
-    requestBody: { raw },
-  });
-  return result.data;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,12 +73,13 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, message: 'Missing username' });
     }
 
-    const gmailSender = process.env.SMTP_USER || 'sparevone@gmail.com';
-    const targetEmail = email || (username.includes('@') ? username : gmailSender);
+    const smtpUser = process.env.SMTP_USER || 'sparevone@gmail.com';
+    const smtpPass = process.env.SMTP_PASS || 'wpuk rddy frix kjiu';
+    const targetEmail = email || (username.includes('@') ? username : smtpUser);
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
 
-    // 1. Persist OTP in Firestore (works across separate serverless function invocations)
+    // 1. Persist OTP in Firestore so verify-otp.js can read it in a separate invocation
     await firestoreSet('otp_store', username.toLowerCase(), {
       code: otpCode,
       expiresAt,
@@ -149,20 +87,30 @@ export default async function handler(req, res) {
     });
     console.log(`[Vercel 2FA] OTP stored in Firestore for ${username} -> ${targetEmail}: ${otpCode}`);
 
-    // 2. Send via Gmail REST API (bypasses cloud IP SMTP blocks)
-    const fromDisplay = process.env.SMTP_FROM || `"SpareShare Security" <${gmailSender}>`;
-    await sendViaGmailApi({
+    // 2. Send email via nodemailer SMTP (Gmail App Password, port 465 SSL)
+    const transporter = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: smtpUser,
+        pass: smtpPass,
+      },
+    });
+
+    const fromDisplay = process.env.SMTP_FROM || `"SpareShare Security" <${smtpUser}>`;
+    await transporter.sendMail({
       from: fromDisplay,
       to: targetEmail,
       subject: `SpareShare 2-Step Verification Code: ${otpCode}`,
+      text: `Hello ${username},\n\nYour SpareShare 2-Step Verification Code is: ${otpCode}\nValid for 5 minutes.\n\nDispatched from ${smtpUser}`,
       html: buildOtpHtml(username, otpCode),
-      text: `Hello ${username},\n\nYour SpareShare 2-Step Verification Code is: ${otpCode}\nValid for 5 minutes.\n\nDispatched from ${gmailSender}`,
     });
-    console.log(`[Vercel 2FA] Email sent via Gmail API to ${targetEmail}`);
+    console.log(`[Vercel 2FA] Email sent via SMTP to ${targetEmail}`);
 
     return res.status(200).json({
       success: true,
-      message: `2-Step verification passcode dispatched from ${gmailSender} to ${targetEmail}`,
+      message: `2-Step verification passcode dispatched from ${smtpUser} to ${targetEmail}`,
       otpCode,
     });
   } catch (err) {
