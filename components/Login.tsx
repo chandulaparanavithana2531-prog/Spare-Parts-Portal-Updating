@@ -280,9 +280,9 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     placeholder="Enter username"
                   />
                 </div>
-                {isRegistering && username && !/^[a-zA-Z0-9._%+-]+@gmail\.com$/i.test(username) && username.toLowerCase() !== 'admin' && (
+                {isRegistering && username && !/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/i.test(username) && username.toLowerCase() !== 'admin' && (
                   <p className="mt-1.5 text-xs text-red-500 font-semibold animate-in fade-in duration-200">
-                    Username must be a valid @gmail.com address, unless registering as admin.
+                    Username must be a valid email address (e.g. user@vallibel.com), unless registering as admin.
                   </p>
                 )}
               </div>
