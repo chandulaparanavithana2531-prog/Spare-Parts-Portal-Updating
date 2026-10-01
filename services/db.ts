@@ -640,6 +640,41 @@ export const registerUser = async (user: User, password: string): Promise<void> 
   });
 };
 
+/**
+ * Admin-only: Directly creates a pre-approved user with a specific role, plant, and password.
+ * Used when admins grant access to specific users — no registration flow needed.
+ */
+export const adminAddUser = async (
+  user: User,
+  password: string,
+  performerUsername: string
+): Promise<void> => {
+  // Check if username/email already exists
+  const usersRef = collection(db, 'users');
+  const q = query(usersRef, where('username', '==', user.username));
+  const querySnapshot = await getDocs(q);
+
+  if (!querySnapshot.empty) {
+    throw new Error('A user with this email already exists.');
+  }
+
+  const hashedPassword = await hashPassword(password);
+
+  await setDoc(doc(db, 'users', user.username), {
+    ...user,
+    approved: true, // Admin-created users are immediately approved
+    password: hashedPassword
+  });
+
+  await logAction(
+    performerUsername,
+    'CREATE',
+    'user',
+    user.username,
+    `Admin created user: ${user.username}, role: ${user.role}, plant: ${user.factoryAffiliation || 'ALL'}`
+  );
+};
+
 export const loginUser = async (username: string, password: string): Promise<User | null> => {
   // 1. Hardcoded Admin (Legacy/Fallback)
   if (username === 'admin' && (password === 'vone' || password === 'admin' || password === 'admin123')) {
