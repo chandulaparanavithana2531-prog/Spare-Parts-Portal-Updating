@@ -1830,33 +1830,6 @@ Ensure the Excel format is correct and you have a stable internet connection.
             {activeTab === 'inventory' && (
               <div className="flex flex-wrap items-center gap-4 bg-white/40 backdrop-blur-sm p-4 rounded-3xl border border-white/60 shadow-sm animate-in fade-in slide-in-from-top-2">
                 <div className="flex items-center gap-2 px-3 py-1.5 bg-white/80 rounded-xl border border-gray-200 shadow-tiny overflow-hidden max-w-[200px]">
-                  <span className="text-[10px] font-black uppercase text-gray-400 shrink-0">Plant:</span>
-                  <select 
-                    value={factoryFilter}
-                    onChange={(e) => setFactoryFilter(e.target.value)}
-                    className="text-xs font-bold text-gray-700 bg-transparent outline-none focus:ring-0 border-none cursor-pointer truncate"
-                  >
-                    <option value="">All Plants</option>
-                    {factories.map(f => <option key={f.id} value={f.name}>{f.name}</option>)}
-                  </select>
-                </div>
-
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-white/80 rounded-xl border border-gray-200 shadow-tiny overflow-hidden max-w-[200px]">
-                  <span className="text-[10px] font-black uppercase text-gray-400 shrink-0">Class:</span>
-                  <select 
-                    value={criticalityFilter}
-                    onChange={(e) => setCriticalityFilter(e.target.value)}
-                    className="text-xs font-bold text-gray-700 bg-transparent outline-none focus:ring-0 border-none cursor-pointer truncate"
-                  >
-                    <option value="">All Classes</option>
-                    <option value="Vital">Vital (V)</option>
-                    <option value="Essential">Essential (E)</option>
-                    <option value="Desirable">Desirable (D)</option>
-                    <option value="Non Using">Non Using</option>
-                  </select>
-                </div>
-
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-white/80 rounded-xl border border-gray-200 shadow-tiny overflow-hidden max-w-[200px]">
                   <span className="text-[10px] font-black uppercase text-gray-400 shrink-0">FSN:</span>
                   <select 
                     value={fsnFilter}
@@ -1870,22 +1843,9 @@ Ensure the Excel format is correct and you have a stable internet connection.
                   </select>
                 </div>
 
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-white/80 rounded-xl border border-gray-200 shadow-tiny overflow-hidden max-w-[200px]">
-                  <span className="text-[10px] font-black uppercase text-gray-400 shrink-0">Has Image:</span>
-                  <select 
-                    value={imageFilter}
-                    onChange={(e) => setImageFilter(e.target.value)}
-                    className="text-xs font-bold text-gray-700 bg-transparent outline-none focus:ring-0 border-none cursor-pointer truncate"
-                  >
-                    <option value="all">All</option>
-                    <option value="with">With Pictures Only</option>
-                    <option value="without">Without Pictures Only</option>
-                  </select>
-                </div>
-
-                {(factoryFilter || categoryFilter || criticalityFilter || imageFilter !== 'all' || fsnFilter) && (
+                {fsnFilter && (
                   <button 
-                    onClick={() => { setFactoryFilter(''); setCategoryFilter(''); setCriticalityFilter(''); setImageFilter('all'); setFsnFilter(''); }}
+                    onClick={() => setFsnFilter('')}
                     className="text-[10px] font-black uppercase text-red-500 hover:text-red-600 px-3 transition-colors"
                   >
                     Clear Filters
