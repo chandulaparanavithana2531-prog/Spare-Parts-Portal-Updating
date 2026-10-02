@@ -104,7 +104,17 @@ export function mergeAndDeduplicate(localParts: SparePart[], backendParts: Spare
   };
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+export function getApiUrl(): string {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  if (typeof window !== 'undefined' && window.location) {
+    return '';
+  }
+  return 'http://localhost:3000';
+}
+
+const API_URL = getApiUrl();
 
 async function fetchWithTimeout(resource: string | URL, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
   const { timeout = 2500, ...restOptions } = options;
@@ -412,7 +422,7 @@ export async function sendEmailNotification(emailData: {
   html?: string;
 }): Promise<{ success: boolean; message?: string }> {
   try {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    const API_URL = getApiUrl();
     console.log(`[Email Service] Sending notification to: ${emailData.to}`);
     const response = await fetch(`${API_URL}/api/send-email`, {
       method: 'POST',
@@ -439,7 +449,7 @@ export async function sendEmailNotification(emailData: {
 
     return await resolvedResponse.json();
   } catch (error) {
-    console.warn(`[Email Service] Failed to send email notification to ${emailData.to}. Fallback to console log. Error:`, error);
+    console.warn(`[Email Service] Failed to send email notification to ${emailData.to}. Error:`, error);
     return { success: false, message: String(error) };
   }
 }
@@ -455,7 +465,7 @@ export async function notifyOrderCreated(eventData: {
   userFactory: string;
 }): Promise<{ success: boolean; message?: string }> {
   try {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    const API_URL = getApiUrl();
     console.log(`[API Service] Notifying backend of OrderCreated for order: ${eventData.order.id}`);
     
     let response = await fetch(`${API_URL}/api/orders/created`, {
@@ -467,7 +477,7 @@ export async function notifyOrderCreated(eventData: {
     });
 
     if (!response.ok && response.status === 404) {
-      response = await fetch(`${API_URL}/orders/created`, {
+      response = await fetch(`${API_URL}/api/orders-created`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

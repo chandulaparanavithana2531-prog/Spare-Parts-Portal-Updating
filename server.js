@@ -67,6 +67,9 @@ try {
 }
 
 // Configure Email Transporter (Default sender: sparevone@gmail.com)
+const smtpUser = process.env.SMTP_USER || 'sparevone@gmail.com';
+const smtpPass = process.env.SMTP_PASS || 'wpuk rddy frix kjiu';
+
 const transporter = nodemailer.createTransport(
   process.env.SMTP_HOST && process.env.SMTP_HOST !== 'smtp.gmail.com'
     ? {
@@ -74,20 +77,20 @@ const transporter = nodemailer.createTransport(
         port: parseInt(process.env.SMTP_PORT || '587', 10),
         secure: process.env.SMTP_SECURE === 'true',
         auth: {
-          user: process.env.SMTP_USER || 'sparevone@gmail.com',
-          pass: process.env.SMTP_PASS || ''
+          user: smtpUser,
+          pass: smtpPass
         }
       }
     : {
         service: 'gmail',
         auth: {
-          user: process.env.SMTP_USER || 'sparevone@gmail.com',
-          pass: process.env.SMTP_PASS || ''
+          user: smtpUser,
+          pass: smtpPass
         }
       }
 );
 
-const isMockEmail = !process.env.SMTP_PASS || process.env.SMTP_USER === 'ethereal.user';
+const isMockEmail = !smtpPass || smtpUser === 'ethereal.user';
 if (isMockEmail) {
   console.warn('[Email] SMTP credentials (SMTP_PASS) are not configured. Running in Mock Mode with sender sparevone@gmail.com (emails print to console).');
 }
