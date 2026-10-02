@@ -95,12 +95,37 @@ if (isMockEmail) {
 // Initialize global EmailQueue and register event listener
 const emailQueue = new EmailQueue(transporter);
 
-orderEventEmitter.on('OrderCreated', ({ order, userEmail, plantEmail, userFactory }) => {
+orderEventEmitter.on('OrderCreated', async ({ order, userEmail, plantEmail, userFactory }) => {
   console.log(`[Event Listener] OrderCreated received for Order ID: ${order.id}. Enqueuing notification emails...`);
 
   // 1. Calculate Estimated Fulfillment Timeframe
   const isCrossPlant = order.items && order.items.length > 0 && order.items[0].fromFactory !== userFactory;
   const estimatedTimeframe = isCrossPlant ? '5 Business Days (Cross-Plant Transfer)' : '2 Business Days (Local Fulfillment)';
+
+  // Determine recipient plant email(s) from user accounts if needed
+  let recipientPlantEmail = plantEmail;
+  const targetFactory = (order.items && order.items.length > 0 && order.items[0].fromFactory) ? order.items[0].fromFactory : '';
+
+  if (firestoreDb && targetFactory && (!recipientPlantEmail || recipientPlantEmail.includes('admin@gmail.com'))) {
+    try {
+      const usersSnap = await firestoreDb.collection('users').get();
+      const plantUserEmails = [];
+      usersSnap.forEach(docSnap => {
+        const uData = docSnap.data();
+        if (uData.factoryAffiliation && resolvePlantIdServer(uData.factoryAffiliation) === resolvePlantIdServer(targetFactory)) {
+          const email = uData.email || uData.username;
+          if (email && email.includes('@')) {
+            plantUserEmails.push(email);
+          }
+        }
+      });
+      if (plantUserEmails.length > 0) {
+        recipientPlantEmail = Array.from(new Set(plantUserEmails)).join(', ');
+      }
+    } catch (e) {
+      console.warn('[Event Listener] Firestore plant user lookup warning:', e.message);
+    }
+  }
 
   // 2. Queue Recipient 1: User Confirmation Email
   const userHtml = generateCustomerConfirmationEmail(order, userEmail, estimatedTimeframe);
@@ -113,11 +138,11 @@ orderEventEmitter.on('OrderCreated', ({ order, userEmail, plantEmail, userFactor
   };
   emailQueue.addJob(userMailOptions);
 
-  // 3. Queue Recipient 2: Plant Work Order Dispatch Alert
-  const plantHtml = generatePlantNotificationEmail(order, plantEmail, userFactory || 'Unknown Plant', userEmail);
+  // 3. Queue Recipient 2: Plant Work Order Dispatch Alert (Sent to created user account emails of target plant)
+  const plantHtml = generatePlantNotificationEmail(order, recipientPlantEmail, userFactory || 'Unknown Plant', userEmail);
   const plantMailOptions = {
     from: process.env.SMTP_FROM || '"SpareShare Operations" <sparevone@gmail.com>',
-    to: plantEmail,
+    to: recipientPlantEmail,
     subject: `Action Required: New Work Order Dispatch (Order Ref: ${order.id})`,
     text: `Hello Plant Manager,\n\nA new work order has been requested from your plant inventory.\n\nOrder ID: ${order.id}\nCustomer: ${userEmail}\n\nPlease prepare the items.\n\nThank you,\nSpare Parts Portal`,
     html: plantHtml

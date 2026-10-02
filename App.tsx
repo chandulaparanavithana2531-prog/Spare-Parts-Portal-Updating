@@ -18,7 +18,8 @@ import { UserManagement } from './components/UserManagement'; // Import
 import { Users } from 'lucide-react';
 import { AuditLogs } from './components/AuditLogs';
 import { UploadPreviewModal } from './components/UploadPreviewModal';
-import { ExcelParseResult } from './services/excelService';
+import { SystemReportPreviewModal } from './components/SystemReportPreviewModal';
+import { ExcelParseResult, SystemReportParseResult } from './services/excelService';
 import { InventorySyncModal } from './components/InventorySyncModal';
 import { setStoredInventory, getStoredInventory } from './services/idbStorage';
 
@@ -575,6 +576,11 @@ function App() {
 
   const [notificationCounts, setNotificationCounts] = useState({ orders: 0, users: 0 });
 
+  // System Report Preview state
+  const [systemReportPreview, setSystemReportPreview] = useState<SystemReportParseResult | null>(null);
+  const [isConfirmingReport, setIsConfirmingReport] = useState(false);
+  const [pendingReportFile, setPendingReportFile] = useState<string>('');
+
   // Theme State
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     return localStorage.getItem('theme') === 'dark';
@@ -701,41 +707,52 @@ function App() {
 
   const handleSystemReportUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
-    
+
     setIsProcessingReport(true);
     setReportFeedback(null);
     const file = e.target.files[0];
-    
+    setPendingReportFile(file.name);
+
     try {
-      // 1. Parse report
+      // 1. Parse only — show preview, do NOT save yet
       const result = await parseSystemReport(file, selectedReportFactory, selectedSystem, selectedReportType);
-      
-      // 2. Commit updates to database
+      setSystemReportPreview(result);
+      // Reset input so same file can be re-selected
+      e.target.value = '';
+    } catch (err) {
+      console.error('System report parsing failed', err);
+      alert(`Report parsing failed: ${(err as any).message || String(err)}`);
+    } finally {
+      setIsProcessingReport(false);
+    }
+  };
+
+  const handleConfirmSystemReport = async () => {
+    if (!systemReportPreview) return;
+    setIsConfirmingReport(true);
+    try {
       const { updatedCount, deductedCount } = await saveSystemReport(
         selectedReportFactory,
-        result.reportType,
-        result.updatedParts,
+        systemReportPreview.reportType,
+        systemReportPreview.updatedParts,
         currentUser?.username || 'unknown',
         selectedReportDate
       );
-      
-      // 3. Refresh display catalog data
       await refreshData();
-      
-      // 4. Update UI feedback
-      if (result.reportType.includes('MB51') || result.reportType.includes('TRANSACTION')) {
-        setReportFeedback(`Successfully processed daily consumption report: ${file.name}. Checked ${result.metadata.totalRows} lines, matching and deducting stock values for ${deductedCount} active spare parts.`);
+      const isConsumption =
+        systemReportPreview.reportType.includes('MB51') ||
+        systemReportPreview.reportType.includes('TRANSACTION');
+      if (isConsumption) {
+        setReportFeedback(`Successfully processed consumption report: ${pendingReportFile}. Deducted stock for ${deductedCount} spare parts at ${selectedReportFactory}.`);
       } else {
-        setReportFeedback(`Successfully processed stock inventory report: ${file.name}. Created or updated stock quantities for ${updatedCount} items at ${selectedReportFactory}.`);
+        setReportFeedback(`Successfully updated inventory from: ${pendingReportFile}. Updated ${updatedCount} parts at ${selectedReportFactory}.`);
       }
-      
-      // Reset input element value
-      e.target.value = '';
+      setSystemReportPreview(null);
     } catch (err) {
-      console.error("System report processing failed", err);
-      alert(`Report processing failed: ${(err as any).message || String(err)}`);
+      console.error('System report save failed', err);
+      alert(`Failed to apply report: ${(err as any).message || String(err)}`);
     } finally {
-      setIsProcessingReport(false);
+      setIsConfirmingReport(false);
     }
   };
 
@@ -2310,6 +2327,18 @@ Ensure the Excel format is correct and you have a stable internet connection.
           onConfirm={confirmUpload}
           result={uploadPreview}
           isUploading={isConfirmingUpload}
+        />
+      )}
+
+      {systemReportPreview && (
+        <SystemReportPreviewModal
+          isOpen={!!systemReportPreview}
+          onClose={() => setSystemReportPreview(null)}
+          onConfirm={handleConfirmSystemReport}
+          isConfirming={isConfirmingReport}
+          parseResult={systemReportPreview}
+          existingParts={parts}
+          factoryId={selectedReportFactory}
         />
       )}
 

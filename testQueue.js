@@ -180,7 +180,7 @@ test('HTML Templates: generates correct, visually styled email strings', (t) => 
 
   assert.match(plantHtml, /<!DOCTYPE html>/);
   assert.match(plantHtml, /lankatiles\.admin@gmail\.com/);
-  assert.match(plantHtml, /Rocell Horana/);
+  assert.match(plantHtml, /RCL-H|Rocell Horana/);
   assert.match(plantHtml, /buyer@gmail\.com/);
   assert.match(plantHtml, /Ball Bearing 6204 DDU/);
   assert.match(plantHtml, /Operations Checklist/);

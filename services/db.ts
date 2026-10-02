@@ -327,14 +327,57 @@ export const createOrder = async (
     itemsByFactory[item.factoryId].push(item);
   });
 
+  // Fetch all registered user accounts to look up target plant email addresses
+  let allUsers: User[] = [];
+  try {
+    const usersRef = collection(db, 'users');
+    const userDocs = await getDocs(usersRef);
+    userDocs.forEach(docSnap => {
+      if (docSnap.exists()) {
+        allUsers.push(docSnap.data() as User);
+      }
+    });
+  } catch (e) {
+    console.warn("[DB] Failed to fetch users for target plant email lookup:", e);
+  }
+
+  // Fetch ordering user's plant affiliation
+  let userFactory = 'Unknown Plant';
+  try {
+    const userDocRef = doc(db, 'users', username);
+    const userSnap = await getDoc(userDocRef);
+    if (userSnap.exists()) {
+      const uData = userSnap.data() as User;
+      userFactory = uData.factoryAffiliation || 'Unknown Plant';
+    }
+  } catch (e) {
+    console.warn("[DB] Failed to fetch ordering user factory affiliation:", e);
+  }
+
   const localOrdersToSave: Order[] = [];
 
   // Create separate order for each factory group
-  Object.entries(itemsByFactory).forEach(([factoryId, factoryItems]) => {
+  for (const [factoryId, factoryItems] of Object.entries(itemsByFactory)) {
     const orderId = `ord-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
     const totalValue = factoryItems.reduce((sum, item) => sum + (item.unitCost * item.orderQty), 0);
 
-    const plantEmail = PLANT_EMAILS[factoryId] || 'admin@gmail.com';
+    // Resolve target plant user account emails by matching factoryId with user.factoryAffiliation
+    const targetPlantUsers = allUsers.filter(u => {
+      if (!u.factoryAffiliation) return false;
+      return resolvePlantId(u.factoryAffiliation) === resolvePlantId(factoryId);
+    });
+
+    const userEmails = targetPlantUsers
+      .map(u => u.email || u.username)
+      .filter(email => email && email.includes('@'));
+
+    let plantEmail = '';
+    if (userEmails.length > 0) {
+      plantEmail = Array.from(new Set(userEmails)).join(', ');
+    } else {
+      const canonicalName = resolvePlantId(factoryId);
+      plantEmail = PLANT_EMAILS[canonicalName] || PLANT_EMAILS[factoryId] || 'admin@gmail.com';
+    }
 
     const order: Order = {
       id: orderId,
@@ -352,13 +395,13 @@ export const createOrder = async (
       totalValue,
       requestedBy: username,
       userEmail: username, // Explicitly include user email address in Firestore order document
-      plantEmail: plantEmail, // Explicitly include plant manager email in Firestore order document
+      plantEmail: plantEmail, // Explicitly include target plant user email(s) in Firestore order document
       status: 'pending',
       createdAt: Date.now()
     };
 
     localOrdersToSave.push(order);
-  });
+  }
 
   // Save copy to local storage
   try {
@@ -367,19 +410,6 @@ export const createOrder = async (
     localStorage.setItem('spareshare_orders', JSON.stringify([...existingList, ...localOrdersToSave]));
   } catch (err) {
     console.warn("[DB Fallback] Failed to save orders copy in localStorage:", err);
-  }
-
-  // Fetch ordering user's plant affiliation
-  let userFactory = 'Unknown Plant';
-  try {
-    const userDocRef = doc(db, 'users', username);
-    const userSnap = await getDoc(userDocRef);
-    if (userSnap.exists()) {
-      const uData = userSnap.data() as User;
-      userFactory = uData.factoryAffiliation || 'Unknown Plant';
-    }
-  } catch (e) {
-    console.warn("[DB] Failed to fetch ordering user factory affiliation:", e);
   }
 
   try {

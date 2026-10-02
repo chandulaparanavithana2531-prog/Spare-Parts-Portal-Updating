@@ -246,8 +246,25 @@ export function generateCustomerConfirmationEmail(order, userEmail, estimatedTim
 }
 
 export function generatePlantNotificationEmail(order, plantEmail, customerFactory, userEmail) {
-  const sourcePlant = (order.items && order.items.length > 0 && order.items[0].fromFactory) ? order.items[0].fromFactory : 'LT';
-  const requestingPlant = customerFactory || 'RCL-E';
+  const plantShortNameMap = {
+    'Lanka Tiles': 'LT',
+    'LT': 'LT',
+    'Lanka Wall Tiles': 'LWT',
+    'LWT': 'LWT',
+    'Rocell Horana': 'RCL-H',
+    'RCLH': 'RCL-H',
+    'RCL-H': 'RCL-H',
+    'Rocell Eheliyagoda': 'RCL-E',
+    'RCLE': 'RCL-E',
+    'RCL-E': 'RCL-E'
+  };
+
+  const rawSource = (order.items && order.items.length > 0 && order.items[0].fromFactory) ? order.items[0].fromFactory : 'LT';
+  const sourcePlant = plantShortNameMap[rawSource] || rawSource;
+
+  const rawRequesting = customerFactory || order.userFactory || 'RCL-E';
+  const requestingPlant = plantShortNameMap[rawRequesting] || rawRequesting;
+
   const requester = userEmail || order.requestedBy || 'user@rcl.lk';
   const appUrl = process.env.VITE_APP_URL || process.env.APP_URL || 'https://spareshare-33986.web.app';
 
@@ -255,7 +272,7 @@ export function generatePlantNotificationEmail(order, plantEmail, customerFactor
   const rejectUrl = `${appUrl}/#reject-${order.id}`;
 
   const itemRows = (order.items || []).map(item => {
-    const itemCode = item.sparePartId ? item.sparePartId : 'N/A';
+    const itemCode = item.sparePartId || item.partNumber || item.materialNumber || 'N/A';
     return `
       <tr style="border-bottom: 1px solid #334155;">
         <td style="padding: 10px 0; color: #cbd5e1; width: 35%; vertical-align: top;">Item Code:</td>
