@@ -1,18 +1,6 @@
-import admin from 'firebase-admin';
 import nodemailer from 'nodemailer';
 import { generateCustomerConfirmationEmail, generatePlantNotificationEmail } from '../../emailQueue.js';
 import { syncOrderToSheet } from '../../services/googleSheets.js';
-
-let firestoreDb = null;
-try {
-  if (!admin.apps.length) {
-    const projectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'spareshare-33986';
-    admin.initializeApp({ projectId });
-  }
-  firestoreDb = admin.firestore();
-} catch (e) {
-  console.warn('[Vercel Order API] Firebase Admin notice:', e.message);
-}
 
 const PLANT_EMAILS = {
   'Lanka Tiles': 'lankatiles.admin@gmail.com',
@@ -35,6 +23,41 @@ function resolvePlantCanonical(rawName) {
   if (s === 'rcl-h' || s === 'rclh' || s.includes('horana')) return 'Rocell Horana';
   if (s === 'rcl-e' || s === 'rcle' || s.includes('eheliyagoda') || s === 'gsc') return 'Rocell Eheliyagoda';
   return rawName;
+}
+
+/**
+ * Fetch registered target plant user emails directly from Firestore REST API
+ */
+async function fetchTargetPlantEmails(canonicalTarget) {
+  try {
+    const FIREBASE_PROJECT_ID = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'spareshare-33986';
+    const FIREBASE_WEB_API_KEY = process.env.VITE_FIREBASE_API_KEY || 'AIzaSyAMl2OrlGj_O9qeh02KeKuw6lA_pZLG4XM';
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users?key=${FIREBASE_WEB_API_KEY}`;
+    
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    
+    const data = await res.json();
+    if (!data.documents || !Array.isArray(data.documents)) return [];
+    
+    const emails = [];
+    data.documents.forEach(doc => {
+      const fields = doc.fields || {};
+      const plant = fields.factoryAffiliation?.stringValue;
+      const approved = fields.approved?.booleanValue !== false;
+      const email = fields.email?.stringValue || fields.username?.stringValue;
+      
+      if (approved && plant && resolvePlantCanonical(plant) === canonicalTarget) {
+        if (email && email.includes('@')) {
+          emails.push(email);
+        }
+      }
+    });
+    return Array.from(new Set(emails));
+  } catch (err) {
+    console.warn('[Vercel Order API] Firestore REST user fetch warning:', err.message);
+    return [];
+  }
 }
 
 export default async function handler(req, res) {
@@ -67,26 +90,12 @@ export default async function handler(req, res) {
 
     let recipientPlant = plantEmail || order.plantEmail || '';
 
-    // Dynamically query Firestore users collection to find all created user account emails for the target plant
-    if (firestoreDb && canonicalTarget) {
-      try {
-        const usersSnap = await firestoreDb.collection('users').get();
-        const plantUserEmails = [];
-        usersSnap.forEach(docSnap => {
-          const uData = docSnap.data();
-          if (uData.factoryAffiliation && resolvePlantCanonical(uData.factoryAffiliation) === canonicalTarget) {
-            const email = uData.email || uData.username;
-            if (email && email.includes('@')) {
-              plantUserEmails.push(email);
-            }
-          }
-        });
-        if (plantUserEmails.length > 0) {
-          recipientPlant = Array.from(new Set(plantUserEmails)).join(', ');
-          console.log(`[Vercel Order API] Target plant (${canonicalTarget}) registered user account emails: ${recipientPlant}`);
-        }
-      } catch (e) {
-        console.warn('[Vercel Order API] Firestore target user lookup error:', e.message);
+    // If plantEmail is missing or fallback generic, query Firestore REST API serverless
+    if (!recipientPlant || recipientPlant.includes('admin@gmail.com') || recipientPlant.includes('sparevone@gmail.com')) {
+      const fetchedEmails = await fetchTargetPlantEmails(canonicalTarget);
+      if (fetchedEmails.length > 0) {
+        recipientPlant = fetchedEmails.join(', ');
+        console.log(`[Vercel Order API] Target plant (${canonicalTarget}) emails resolved via REST API: ${recipientPlant}`);
       }
     }
 
@@ -116,7 +125,7 @@ export default async function handler(req, res) {
       }).catch(err => console.warn('[Vercel Order API] Customer email error:', err.message));
     }
 
-    // 4. Send Target Plant Requisition Email to created user account emails
+    // 4. Send Target Plant Requisition Email to created user account emails (e.g. buthminh@vallibel.com)
     if (recipientPlant) {
       await transporter.sendMail({
         from: OFFICIAL_SENDER,
@@ -133,10 +142,10 @@ export default async function handler(req, res) {
       console.warn('[Vercel Order API] Google Sheets sync warning:', err.message);
     });
 
-    console.log(`[Vercel Order API Success] Dispatched requisition request email to target plant user accounts: ${recipientPlant}`);
+    console.log(`[Vercel Order API Success] Dispatched requisition request email from sparevone@gmail.com to target plant (${recipientPlant}) and user confirmation to ${recipientUser}`);
     return res.status(200).json({
       success: true,
-      message: `Requisition request dispatched to target plant user accounts (${recipientPlant}) and user confirmation sent to ${recipientUser}`
+      message: `Requisition request dispatched from sparevone@gmail.com to target plant (${recipientPlant}) and user confirmation sent to ${recipientUser}`
     });
   } catch (err) {
     console.error('[Vercel Order API Error]:', err);
