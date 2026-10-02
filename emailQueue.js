@@ -273,6 +273,15 @@ export function generatePlantNotificationEmail(order, plantEmail, customerFactor
 
   const itemRows = (order.items || []).map(item => {
     const itemCode = item.sparePartId || item.partNumber || item.materialNumber || 'N/A';
+    const imagePreview = (item.imageUrl || item.image_url) ? `
+      <tr style="border-bottom: 1px solid #334155;">
+        <td style="padding: 10px 0; color: #cbd5e1; width: 35%; vertical-align: top;">Part Preview:</td>
+        <td style="padding: 10px 0; color: #ffffff; vertical-align: top;">
+          <img src="${item.imageUrl || item.image_url}" alt="${item.sparePartDescription}" style="max-width: 140px; max-height: 140px; border-radius: 8px; border: 1px solid #334155; object-fit: contain; background: #1e293b;" />
+        </td>
+      </tr>
+    ` : '';
+
     return `
       <tr style="border-bottom: 1px solid #334155;">
         <td style="padding: 10px 0; color: #cbd5e1; width: 35%; vertical-align: top;">Item Code:</td>
@@ -282,6 +291,7 @@ export function generatePlantNotificationEmail(order, plantEmail, customerFactor
         <td style="padding: 10px 0; color: #cbd5e1; width: 35%; vertical-align: top;">Description:</td>
         <td style="padding: 10px 0; color: #ffffff; vertical-align: top;">${item.sparePartDescription}</td>
       </tr>
+      ${imagePreview}
       <tr style="border-bottom: 1px solid #334155;">
         <td style="padding: 10px 0; color: #cbd5e1; width: 35%; vertical-align: top;">Requested Qty:</td>
         <td style="padding: 10px 0; color: #ffffff; font-weight: 700; vertical-align: top;">${item.quantity}</td>

@@ -386,6 +386,7 @@ export const createOrder = async (
         sparePartDescription: item.description,
         partNumber: item.partNumber || '',  // Save Snapshot
         machine: item.machine || '',        // Save Snapshot
+        imageUrl: item.imageUrl || item.image_url || '', // Save Snapshot
         fromFactory: item.factoryId,
         quantity: item.orderQty,
         unitCost: item.unitCost,
