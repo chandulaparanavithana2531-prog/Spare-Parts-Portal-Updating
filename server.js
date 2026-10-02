@@ -133,7 +133,8 @@ orderEventEmitter.on('OrderCreated', async ({ order, userEmail, plantEmail, user
   // 2. Queue Recipient 1: User Confirmation Email
   const userHtml = generateCustomerConfirmationEmail(order, userEmail, estimatedTimeframe);
   const userMailOptions = {
-    from: process.env.SMTP_FROM || '"SpareShare Portal" <sparevone@gmail.com>',
+    from: '"SpareShare Enterprise Portal" <sparevone@gmail.com>',
+    replyTo: 'sparevone@gmail.com',
     to: userEmail,
     subject: `Order Confirmation - Spare Parts Portal (Order Ref: ${order.id})`,
     text: `Hello ${userEmail},\n\nYour order has been successfully placed.\n\nOrder ID: ${order.id}\nEstimated fulfillment: ${estimatedTimeframe}\n\nThank you,\nSpare Parts Portal`,
@@ -144,7 +145,8 @@ orderEventEmitter.on('OrderCreated', async ({ order, userEmail, plantEmail, user
   // 3. Queue Recipient 2: Plant Work Order Dispatch Alert (Sent to created user account emails of target plant)
   const plantHtml = generatePlantNotificationEmail(order, recipientPlantEmail, userFactory || 'Unknown Plant', userEmail);
   const plantMailOptions = {
-    from: process.env.SMTP_FROM || '"SpareShare Operations" <sparevone@gmail.com>',
+    from: '"SpareShare Enterprise Portal" <sparevone@gmail.com>',
+    replyTo: 'sparevone@gmail.com',
     to: recipientPlantEmail,
     subject: `Action Required: New Work Order Dispatch (Order Ref: ${order.id})`,
     text: `Hello Plant Manager,\n\nA new work order has been requested from your plant inventory.\n\nOrder ID: ${order.id}\nCustomer: ${userEmail}\n\nPlease prepare the items.\n\nThank you,\nSpare Parts Portal`,

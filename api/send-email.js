@@ -1,4 +1,4 @@
-﻿import nodemailer from 'nodemailer';
+import nodemailer from 'nodemailer';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -25,7 +25,8 @@ export default async function handler(req, res) {
     });
 
     const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM || `"SpareShare Portal" <${smtpUser}>`,
+      from: '"SpareShare Enterprise Portal" <sparevone@gmail.com>',
+      replyTo: 'sparevone@gmail.com',
       to,
       subject,
       text,

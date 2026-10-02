@@ -102,10 +102,13 @@ export default async function handler(req, res) {
     const userHtml = generateCustomerConfirmationEmail(order, recipientUser, estimatedTimeframe);
     const plantHtml = generatePlantNotificationEmail(order, recipientPlant, userFactory || 'Unknown Plant', recipientUser);
 
+    const OFFICIAL_SENDER = '"SpareShare Enterprise Portal" <sparevone@gmail.com>';
+
     // 3. Send Customer Email
     if (recipientUser && recipientUser.includes('@')) {
       await transporter.sendMail({
-        from: process.env.SMTP_FROM || `"SpareShare Portal" <${smtpUser}>`,
+        from: OFFICIAL_SENDER,
+        replyTo: 'sparevone@gmail.com',
         to: recipientUser,
         subject: `Order Confirmation - Spare Parts Portal (Order Ref: ${order.id})`,
         text: `Hello ${recipientUser},\n\nYour order has been placed.\nOrder ID: ${order.id}\nEstimated fulfillment: ${estimatedTimeframe}`,
@@ -116,7 +119,8 @@ export default async function handler(req, res) {
     // 4. Send Target Plant Requisition Email to created user account emails
     if (recipientPlant) {
       await transporter.sendMail({
-        from: process.env.SMTP_FROM || `"SpareShare Operations" <${smtpUser}>`,
+        from: OFFICIAL_SENDER,
+        replyTo: 'sparevone@gmail.com',
         to: recipientPlant,
         subject: `Action Required: New Work Order Dispatch (Order Ref: ${order.id})`,
         text: `Hello Plant Manager,\n\nA new work order has been requested from your plant inventory.\nOrder ID: ${order.id}\nCustomer: ${recipientUser}`,
