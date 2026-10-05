@@ -108,8 +108,12 @@ export default async function handler(req, res) {
     const estimatedTimeframe = isCrossPlant ? '5 Business Days (Cross-Plant Transfer)' : '2 Business Days (Local Fulfillment)';
 
     // 2. Build Email Templates
+    const apiUrl = process.env.VITE_API_URL || process.env.API_URL || 'https://spareshare-33986.web.app';
+    const approveUrl = `${apiUrl}/api/orders/action?orderId=${encodeURIComponent(order.id)}&action=approve`;
+    const rejectUrl  = `${apiUrl}/api/orders/action?orderId=${encodeURIComponent(order.id)}&action=reject`;
+
     const userHtml = generateCustomerConfirmationEmail(order, recipientUser, estimatedTimeframe);
-    const plantHtml = generatePlantNotificationEmail(order, recipientPlant, userFactory || 'Unknown Plant', recipientUser);
+    const plantHtml = generatePlantNotificationEmail(order, recipientPlant, userFactory || 'Unknown Plant', recipientUser, approveUrl, rejectUrl);
 
     const OFFICIAL_SENDER = '"SpareShare Enterprise Portal" <sparevone@gmail.com>';
 

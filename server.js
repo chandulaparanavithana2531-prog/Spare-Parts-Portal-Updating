@@ -295,6 +295,174 @@ app.post(['/api/orders/status-updated', '/orders/status-updated'], async (req, r
   }
 });
 
+// ─── Email Action Webhook (Approve / Reject from email button) ──────────────
+// Plant users click the button in their requisition email and this endpoint
+// processes the order without requiring them to log in.
+app.get(['/api/orders/action', '/orders/action'], async (req, res) => {
+  const { orderId, action, token } = req.query;
+
+  const actionLabel = (action || '').toLowerCase();
+  if (!orderId || !['approve', 'reject'].includes(actionLabel)) {
+    return res.status(400).send(`
+      <!DOCTYPE html><html><head><meta charset="utf-8"><title>Invalid Request</title></head>
+      <body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;">
+        <h2 style="color:#ef4444;">Invalid request.</h2>
+        <p style="color:#94a3b8;">Missing orderId or action parameter.</p>
+      </body></html>
+    `);
+  }
+
+  const newStatus = actionLabel === 'approve' ? 'approved' : 'rejected';
+  const actionDisplay = actionLabel === 'approve' ? '✅ Approved' : '❌ Rejected';
+  const actionColor = actionLabel === 'approve' ? '#10b981' : '#ef4444';
+  const appUrl = process.env.VITE_APP_URL || process.env.APP_URL || 'https://spareshare-33986.web.app';
+
+  console.log(`[Email Action Webhook] Order ${orderId} → ${newStatus} via email button click`);
+
+  let orderData = null;
+  let processError = null;
+
+  if (firestoreDb) {
+    try {
+      const orderRef = firestoreDb.collection('orders').doc(String(orderId));
+      const orderSnap = await orderRef.get();
+
+      if (!orderSnap.exists) {
+        return res.status(404).send(`
+          <!DOCTYPE html><html><head><meta charset="utf-8"><title>Order Not Found</title></head>
+          <body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;">
+            <h2 style="color:#f59e0b;">⚠ Order Not Found</h2>
+            <p style="color:#94a3b8;">Order ID: <strong style="color:#fff;">${orderId}</strong> could not be found.</p>
+            <a href="${appUrl}" style="display:inline-block;margin-top:20px;padding:10px 22px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Open Portal</a>
+          </body></html>
+        `);
+      }
+
+      orderData = orderSnap.data();
+
+      // Check if already processed
+      if (orderData.status && orderData.status !== 'pending') {
+        const existingStatus = orderData.status.toUpperCase();
+        return res.send(`
+          <!DOCTYPE html><html><head><meta charset="utf-8"><title>Already Processed</title></head>
+          <body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;">
+            <div style="max-width:500px;margin:0 auto;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:36px;">
+              <h2 style="color:#f59e0b;margin:0 0 12px;">⚠ Already Processed</h2>
+              <p style="color:#94a3b8;">Order <strong style="color:#fff;">${orderId}</strong> has already been <strong style="color:#f59e0b;">${existingStatus}</strong>.</p>
+              <a href="${appUrl}" style="display:inline-block;margin-top:20px;padding:10px 22px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Open Portal</a>
+            </div>
+          </body></html>
+        `);
+      }
+
+      // Update all pending items to new status
+      const updatedItems = (orderData.items || []).map(item =>
+        item.status === 'pending' ? { ...item, status: newStatus } : item
+      );
+
+      await orderRef.update({
+        status: newStatus,
+        items: updatedItems,
+        [`${newStatus}At`]: Date.now(),
+        processedVia: 'email-action-webhook'
+      });
+
+      // Log audit action
+      try {
+        const logRef = firestoreDb.collection('audit_logs').doc();
+        await logRef.set({
+          user_id: 'email-action',
+          user_name: 'Plant User (via email)',
+          action: 'ORDER_PROCESS',
+          entity_type: 'order',
+          entity_id: String(orderId),
+          details: `Order ${orderId} ${newStatus} via email action button`,
+          created_at: Date.now()
+        });
+      } catch (auditErr) {
+        console.warn('[Email Action] Audit log failed:', auditErr.message);
+      }
+
+      // Notify requester of status update
+      try {
+        const requesterEmail = orderData.userEmail || orderData.requestedBy;
+        if (requesterEmail && requesterEmail.includes('@')) {
+          const { generateOrderStatusUpdateEmail } = await import('./emailQueue.js');
+          const firstItem = (orderData.items || [])[0] || {};
+          const statusHtml = generateOrderStatusUpdateEmail(orderData, firstItem, newStatus, 'Plant Manager');
+          const mailOpts = {
+            from: '"SpareShare Enterprise Portal" <sparevone@gmail.com>',
+            to: requesterEmail,
+            subject: `Order ${newStatus.toUpperCase()} - Ref: ${orderId}`,
+            text: `Hello,\n\nYour order ${orderId} has been ${newStatus} by the plant manager.\n\nThank you,\nSpare Parts Portal`,
+            html: statusHtml
+          };
+          emailQueue.addJob(mailOpts);
+          console.log(`[Email Action] Status update email queued to ${requesterEmail}`);
+        }
+      } catch (mailErr) {
+        console.warn('[Email Action] Status notification email failed:', mailErr.message);
+      }
+
+    } catch (err) {
+      processError = err.message;
+      console.error('[Email Action Webhook Error]:', err);
+    }
+  } else {
+    processError = 'Database not connected. Please process order in the portal directly.';
+  }
+
+  if (processError) {
+    return res.status(500).send(`
+      <!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head>
+      <body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;">
+        <div style="max-width:500px;margin:0 auto;background:#0f172a;border:1px solid #7f1d1d;border-radius:12px;padding:36px;">
+          <h2 style="color:#ef4444;">Processing Error</h2>
+          <p style="color:#94a3b8;">${processError}</p>
+          <a href="${appUrl}" style="display:inline-block;margin-top:20px;padding:10px 22px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Open Portal</a>
+        </div>
+      </body></html>
+    `);
+  }
+
+  // Success page
+  const orderSummary = orderData ? `
+    <p style="color:#94a3b8;font-size:14px;margin:4px 0;">Order ID: <strong style="color:#fff;">${orderId}</strong></p>
+    <p style="color:#94a3b8;font-size:14px;margin:4px 0;">Items: <strong style="color:#fff;">${(orderData.items || []).length}</strong></p>
+    <p style="color:#94a3b8;font-size:14px;margin:4px 0;">Requested by: <strong style="color:#fff;">${orderData.userEmail || orderData.requestedBy || '—'}</strong></p>
+  ` : '';
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Order ${actionDisplay}</title>
+    </head>
+    <body style="margin:0;padding:40px 20px;background:#0b1120;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;">
+      <div style="max-width:520px;width:100%;background:#0f172a;border:1px solid ${actionColor}55;border-radius:16px;padding:40px 36px;box-shadow:0 20px 40px rgba(0,0,0,0.4);text-align:center;">
+        <div style="font-size:52px;margin-bottom:16px;">${actionLabel === 'approve' ? '✅' : '❌'}</div>
+        <h1 style="margin:0 0 8px;font-size:24px;font-weight:700;color:${actionColor};">Order ${actionDisplay}</h1>
+        <p style="margin:0 0 24px;color:#94a3b8;font-size:15px;line-height:1.6;">
+          The spare part requisition order has been <strong style="color:${actionColor};">${newStatus}</strong> successfully.
+          The requester has been notified via email.
+        </p>
+        <div style="background:#1e293b;border-radius:10px;padding:16px 20px;text-align:left;margin-bottom:24px;border:1px solid #334155;">
+          ${orderSummary}
+        </div>
+        <a href="${appUrl}" target="_blank" style="display:inline-block;padding:12px 28px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:14px;letter-spacing:0.03em;">
+          Open SpareShare Portal →
+        </a>
+        <p style="margin-top:20px;font-size:11px;color:#475569;">
+          SpareShare Enterprise Portal · sparevone@gmail.com
+        </p>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
 app.post(['/api/send-email', '/send-email'], (req, res) => {
   try {
     const { to, subject, text, html } = req.body;

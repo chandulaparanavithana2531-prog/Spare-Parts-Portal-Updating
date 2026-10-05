@@ -245,7 +245,7 @@ export function generateCustomerConfirmationEmail(order, userEmail, estimatedTim
   `;
 }
 
-export function generatePlantNotificationEmail(order, plantEmail, customerFactory, userEmail) {
+export function generatePlantNotificationEmail(order, plantEmail, customerFactory, userEmail, approveUrlOverride, rejectUrlOverride) {
   const plantShortNameMap = {
     'Lanka Tiles': 'LT',
     'LT': 'LT',
@@ -267,9 +267,10 @@ export function generatePlantNotificationEmail(order, plantEmail, customerFactor
 
   const requester = userEmail || order.requestedBy || 'user@rcl.lk';
   const appUrl = process.env.VITE_APP_URL || process.env.APP_URL || 'https://spareshare-33986.web.app';
+  const apiUrl = process.env.VITE_API_URL || process.env.API_URL || 'http://localhost:3000';
 
-  const approveUrl = `${appUrl}/#approve-${order.id}`;
-  const rejectUrl = `${appUrl}/#reject-${order.id}`;
+  const approveUrl = approveUrlOverride || `${apiUrl}/api/orders/action?orderId=${encodeURIComponent(order.id)}&action=approve`;
+  const rejectUrl  = rejectUrlOverride  || `${apiUrl}/api/orders/action?orderId=${encodeURIComponent(order.id)}&action=reject`;
 
   const itemRows = (order.items || []).map(item => {
     const itemCode = item.sparePartId || item.partNumber || item.materialNumber || 'N/A';
