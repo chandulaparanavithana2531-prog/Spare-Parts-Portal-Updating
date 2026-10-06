@@ -1,58 +1,49 @@
 rules_version = '2';
 
+// Publish these in Firebase Console > Firestore Database > Rules
+// ONLY AFTER FIREBASE_SERVICE_ACCOUNT is set in Vercel and you can log in
+// (see SECURITY_SETUP.md). Users sign in through /api/login, which issues a
+// Firebase token carrying their role ("admin" / "user") and plant.
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // --- Helper Functions ---
-    
-    // Check if user is authenticated (part of the challenge here is we are using custom auth collection, 
-    // so standard request.auth won't work perfectly unless we use Firebase Auth implementation.
-    // However, since we are doing a "simulation" with a 'users' collection, these rules 
-    // assume standard Firebase Auth is NOT active or we are bypassing it. 
-    // 
-    // *CRITICAL NOTE*: Real security requires Firebase Authentication. 
-    // Since we are using a custom 'users' collection for the demo, we cannot 
-    // enforce "request.auth.uid" rules easily without Custom Claims.
-    // 
-    // For this specific architecture (Client-side Password Check), 
-    // the database effectively needs to be OPEN for read/write to allow the client app 
-    // to check passwords. This is the trade-off of the current "Simple Demo" architecture.
-    // 
-    // To actually secure this, we would need to switch to `firebase.auth()`.
-    // 
-    // Below is how it WOULD look if we used Firebase Auth.
-    // For now, we will allow read/write but try to limit destructive actions if possible.
-    
-    // Allow anyone to read/write for this demo scope as currently designed.
-    // We will at least prevent deleting the main 'inventory' collection structure if possible.
-    
+    function signedIn() { return request.auth != null; }
+    function isAdmin() { return signedIn() && request.auth.token.role == 'admin'; }
+
+    // Accounts (incl. password hashes): only admins, or the user reading their own record
     match /users/{userId} {
-      allow read, write: if true; // Open for registration and login checks
-    }
-    
-    match /inventory/{itemId} {
-      allow read: if true;
-      allow write: if true; 
-    }
-    
-    match /orders/{orderId} {
-      allow read, write: if true;
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow write: if isAdmin();
     }
 
+    match /inventory/{itemId} {
+      allow read, write: if signedIn();
+    }
+
+    match /orders/{orderId} {
+      allow read, create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+
+    // Anyone signed in can add/read log entries; only admins can change or clear them
     match /audit_logs/{logId} {
-      allow read, write: if true;
+      allow read, create: if signedIn();
+      allow update, delete: if isAdmin();
     }
 
     match /historical_consumption/{recordId} {
-      allow read, write: if true;
+      allow read, write: if signedIn();
     }
 
     match /upload_history/{historyId} {
-      allow read, write: if true;
+      allow read, create: if signedIn();
+      allow update, delete: if isAdmin();
     }
 
-    match /otp_store/{docId} {
-      allow read, write, delete: if true; // OTPs are short-lived (5 min) and written by server functions
+    // Everything else (incl. the old otp_store) is closed
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

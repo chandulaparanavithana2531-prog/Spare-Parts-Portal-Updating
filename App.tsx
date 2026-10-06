@@ -617,6 +617,7 @@ function App() {
 
   // Handle user logout and reset user-specific states
   const handleLogout = () => {
+    import('./services/db').then(m => m.logoutUser()).catch(() => {});
     setCurrentUser(null);
     setCartItems([]);
     setIsMobileMenuOpen(false);

@@ -68,7 +68,7 @@ try {
 
 // Configure Email Transporter (Default sender: sparevone@gmail.com)
 const smtpUser = process.env.SMTP_USER || 'sparevone@gmail.com';
-const smtpPass = process.env.SMTP_PASS || 'wpuk rddy frix kjiu';
+const smtpPass = process.env.SMTP_PASS || '';
 
 const transporter = nodemailer.createTransport(
   process.env.SMTP_HOST && process.env.SMTP_HOST !== 'smtp.gmail.com'
