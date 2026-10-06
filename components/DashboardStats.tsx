@@ -49,7 +49,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({ parts, onFilterC
   useEffect(() => {
     const fetchReconciliation = async () => {
       try {
-        const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+        const baseUrl = (import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL !== '/api-backend') ? import.meta.env.VITE_API_URL : '';
         const headers: Record<string, string> = {};
         if (currentUser && currentUser.factoryAffiliation) {
           headers['x-factory-affiliation'] = currentUser.factoryAffiliation;
