@@ -1,52 +1,42 @@
-import nodemailer from 'nodemailer';
 import { generateOrderStatusUpdateEmail } from '../../emailQueue.js';
 import { syncOrderToSheet } from '../../services/googleSheets.js';
+import { requireUser } from '../_lib/auth.js';
+import { getMailer, getSender, cleanRecipients } from '../_lib/mailer.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, message: 'Method Not Allowed' });
   }
 
+  const caller = await requireUser(req, res);
+  if (!caller) return;
+
   try {
     const { order, item, status, performerUsername } = req.body || {};
-    if (!order) {
+    if (!order || !Array.isArray(order.items)) {
       return res.status(400).json({ success: false, message: 'Missing order data' });
     }
 
-    const recipientUser = order.userEmail || order.requestedBy;
-    if (!recipientUser || !recipientUser.includes('@')) {
-      return res.status(200).json({ success: true, message: 'No email recipient for order' });
+    const recipientUser = cleanRecipients(order.userEmail || order.requestedBy)[0];
+    let emailResult = 'no-recipient';
+
+    if (recipientUser) {
+      await getMailer().sendMail({
+        from: getSender(),
+        replyTo: process.env.SMTP_REPLY_TO || process.env.SMTP_USER,
+        to: recipientUser,
+        subject: `Order Update - Ref: ${order.id} (${String(status || '').toUpperCase()})`,
+        text: `Hello ${recipientUser},\n\nYour order ${order.id} status has been updated to ${status} by ${performerUsername}.`,
+        html: generateOrderStatusUpdateEmail(order, item || order.items[0], status, performerUsername),
+      });
+      emailResult = 'sent';
     }
 
-    const smtpUser = process.env.SMTP_USER || 'sparevone@gmail.com';
-    const smtpPass = process.env.SMTP_PASS || 'wpuk rddy frix kjiu';
+    const sheetSync = await syncOrderToSheet(order).catch((err) => ({ success: false, message: err.message }));
 
-    const transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
-      auth: {
-        user: smtpUser,
-        pass: smtpPass,
-      },
-    });
-
-    const html = generateOrderStatusUpdateEmail(order, item || order.items[0], status, performerUsername);
-    await transporter.sendMail({
-      from: process.env.SMTP_FROM || `"SpareShare Operations" <${smtpUser}>`,
-      to: recipientUser,
-      subject: `Order Update - Ref: ${order.id} (${(status || '').toUpperCase()})`,
-      text: `Hello ${recipientUser},\n\nYour order ${order.id} status has been updated to ${status} by ${performerUsername}.`,
-      html,
-    });
-
-    syncOrderToSheet(order).catch(err => {
-      console.warn('[Vercel Status API] Sheet sync warning:', err.message);
-    });
-
-    return res.status(200).json({ success: true, message: `Status update email sent to ${recipientUser}` });
+    return res.status(200).json({ success: true, email: emailResult, recipient: recipientUser || null, sheetSync });
   } catch (err) {
-    console.error('[Vercel Status API Error]:', err);
+    console.error('[Order Status Email Error]:', err);
     return res.status(500).json({ success: false, message: err.message });
   }
 }
