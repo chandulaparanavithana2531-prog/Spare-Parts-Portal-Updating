@@ -803,7 +803,7 @@ export async function parseAndSyncPlantFile(
     console.warn('[parseAndSyncPlantFile] Firestore save error (using localStorage fallback):', saveErr);
   }
 
-  const API_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || 'http://localhost:3000';
+  const API_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL && import.meta.env.VITE_API_URL !== '/api-backend') ? import.meta.env.VITE_API_URL : '';
   const saveUrls = [
     `${API_URL}/api/inventory/save-inventory`,
     'http://localhost:3000/api/inventory/save-inventory',

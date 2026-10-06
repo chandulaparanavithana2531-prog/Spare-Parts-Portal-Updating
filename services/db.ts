@@ -1,5 +1,6 @@
 import { collection, doc, writeBatch, getDocs, setDoc, getDoc, query, where, Timestamp, deleteDoc } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, auth } from './firebase';
+import { signInWithCustomToken, signOut } from 'firebase/auth';
 import { SparePart, User, UserRole, Order, OrderStatus, HistoricalConsumptionRecord, UploadHistoryRecord } from '../types';
 import { logAction } from './audit';
 import { resolvePlantId } from './inventorySyncService';
@@ -7,7 +8,7 @@ import { getStoredInventory, setStoredInventory } from './idbStorage';
 
 export { getStoredInventory, setStoredInventory };
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const API_URL = (import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL !== '/api-backend') ? import.meta.env.VITE_API_URL : '';
 
 // --- Inventory Operations ---
 
@@ -376,7 +377,7 @@ export const createOrder = async (
       plantEmail = Array.from(new Set(userEmails)).join(', ');
     } else {
       const canonicalName = resolvePlantId(factoryId);
-      plantEmail = PLANT_EMAILS[canonicalName] || PLANT_EMAILS[factoryId] || 'admin@gmail.com';
+      plantEmail = ''; // Resolved on the server from approved users of the supplying plant
     }
 
     const order: Order = {
@@ -435,7 +436,7 @@ export const createOrder = async (
         await notifyOrderCreated({
           order,
           userEmail: username,
-          plantEmail: order.plantEmail || 'admin@gmail.com',
+          plantEmail: order.plantEmail || '',
           userFactory
         });
       }
@@ -577,26 +578,6 @@ export const processOrderItem = async (orderId: string, itemPartId: string, stat
     batch.update(orderRef, { items: order.items, status: mainStatus, approvedAt: Date.now() });
     await batch.commit();
 
-    // C. Email back to ordering user
-    try {
-      const { sendEmailNotification } = await import('./apiService');
-      const portalUrl = window.location.origin;
-      const orderUrl = `${portalUrl}/orders/${orderId}`;
-      const emailToRequester = {
-        to: order.requestedBy.includes('@') ? order.requestedBy : 'admin@gmail.com',
-        subject: `Order Confirmed by ${item.fromFactory}`,
-        text: `Hello ${order.requestedBy},\n\nYour order for ${item.sparePartDescription} (Qty: ${item.quantity}, Price: Rs. ${item.totalValue.toLocaleString()}) has been confirmed by ${item.fromFactory}.\n\nOrder ID: ${orderId}\n\nYou can view the updated order status directly in the portal: ${orderUrl}\n\nThank you,\nSpare Parts Portal`,
-        html: `<p>Hello <strong>${order.requestedBy}</strong>,</p>
-               <p>Your order for <strong>${item.sparePartDescription}</strong> (Qty: ${item.quantity}, Price: Rs. ${item.totalValue.toLocaleString()}) has been confirmed by <strong>${item.fromFactory}</strong>.</p>
-               <p><strong>Order ID:</strong> ${orderId}</p>
-               <p><a href="${orderUrl}" style="display:inline-block;padding:10px 20px;background-color:#2563eb;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold;">View Order Details</a></p>
-               <p>Or copy this link: <a href="${orderUrl}">${orderUrl}</a></p>
-               <p>Thank you,<br/>Spare Parts Portal</p>`
-      };
-      sendEmailNotification(emailToRequester).catch(err => console.warn("[DB] Failed to send confirmation email", err));
-    } catch (err) {
-      console.warn("[DB] Failed to load email api service dynamically:", err);
-    }
 
     await logAction(
       performerUsername,
@@ -789,87 +770,86 @@ export const updateUserEmail = async (
   }
 };
 
+/**
+ * Sign in.
+ * 1. The password is checked on the server (/api/login), which returns a Firebase
+ *    custom token carrying the user's role and plant. Firestore rules rely on it.
+ * 2. Transition fallback: only while the server login is not configured yet (HTTP 503)
+ *    or not available (local Express dev server, 404), the old browser-side check is used.
+ *    There are NO default/backdoor passwords any more.
+ */
 export const loginUser = async (identifier: string, password: string): Promise<User | null> => {
-  const cleanId = identifier.trim().toLowerCase();
-
-  // 1. Hardcoded Admin (Legacy/Fallback)
-  if ((cleanId === 'admin' || cleanId === 'sparevone@gmail.com' || cleanId === 'admin@rcl.lk') &&
-      (password === 'vone' || password === 'admin' || password === 'admin123' || password === 'password')) {
-    return { username: 'admin', email: 'sparevone@gmail.com', role: 'admin', approved: true };
+  const id = identifier.trim();
+  let res: Response | null = null;
+  try {
+    const { getApiUrl } = await import('./apiService');
+    res = await fetch(getApiUrl() + '/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier: id, password })
+    });
+  } catch (err) {
+    console.warn('[Login] Server login unreachable, using transition fallback:', err);
+    res = null;
   }
 
-  // 2. Dynamic Users from Firestore
+  if (res && res.ok) {
+    const data = await res.json();
+    await signInWithCustomToken(auth, data.token);
+    return { ...data.user, approved: true, twoFactorVerified: true } as User;
+  }
+  if (res && res.status === 401) return null;
+  if (res && res.status === 403) throw new Error('Account pending approval');
+  if (res && res.status !== 503 && res.status !== 404) {
+    const errData = await res.json().catch(() => ({} as any));
+    throw new Error(errData.message || 'Login failed (HTTP ' + res.status + ')');
+  }
+
+  return legacyLoginUser(id, password);
+};
+
+export const logoutUser = async (): Promise<void> => {
+  try { await signOut(auth); } catch (e) { /* ignore */ }
+};
+
+// Transition-only browser check (works only while Firestore rules are still open)
+const legacyLoginUser = async (identifier: string, password: string): Promise<User | null> => {
+  const cleanId = identifier.trim().toLowerCase();
   try {
     let userData: any = null;
-
-    // Try direct username doc lookup
-    const userDocRef = doc(db, 'users', identifier);
-    const userDoc = await getDoc(userDocRef);
-
-    if (userDoc.exists()) {
-      userData = userDoc.data();
-    } else {
-      // Try querying by email
+    if (!identifier.includes('/')) {
+      const userDoc = await getDoc(doc(db, 'users', identifier));
+      if (userDoc.exists()) userData = userDoc.data();
+    }
+    if (!userData) {
       const usersRef = collection(db, 'users');
-      const qEmail = query(usersRef, where('email', '==', cleanId));
-      const snapEmail = await getDocs(qEmail);
-
+      const snapEmail = await getDocs(query(usersRef, where('email', '==', cleanId)));
       if (!snapEmail.empty) {
         userData = snapEmail.docs[0].data();
       } else {
-        // Try query by username case-insensitively
-        const qUser = query(usersRef, where('username', '==', identifier));
-        const snapUser = await getDocs(qUser);
-        if (!snapUser.empty) {
-          userData = snapUser.docs[0].data();
-        }
+        const snapUser = await getDocs(query(usersRef, where('username', '==', identifier)));
+        if (!snapUser.empty) userData = snapUser.docs[0].data();
       }
     }
+    if (!userData || !userData.password) return null;
 
-    // Check matching standard account fallback
-    if (!userData) {
-      const stdAccount = STANDARD_PLANT_ACCOUNTS.find(
-        acc => acc.username.toLowerCase() === cleanId || acc.email.toLowerCase() === cleanId
-      );
-      if (stdAccount && (password === 'vone' || password === 'admin' || password === 'admin123' || password === '123456' || password === 'password')) {
-        return {
-          username: stdAccount.username,
-          email: stdAccount.email,
-          role: stdAccount.role,
-          factoryAffiliation: stdAccount.factoryAffiliation,
-          approved: true
-        };
-      }
-    }
+    const inputHash = await hashPassword(password);
+    if (userData.password !== inputHash && userData.password !== password) return null;
+    if (userData.approved === false) throw new Error('Account pending approval');
 
-    if (userData) {
-      const inputHash = await hashPassword(password);
-
-      // Check Password: Try Hash match first, then fallback to Plaintext or standard defaults
-      const isHashMatch = userData.password === inputHash;
-      const isPlainMatch = userData.password === password;
-      const isDefaultPass = password === 'vone' || password === 'admin' || password === '123456' || password === 'password';
-
-      if (isHashMatch || isPlainMatch || isDefaultPass) {
-        if (userData.approved === false) {
-          throw new Error("Account pending approval");
-        }
-
-        return {
-          username: userData.username,
-          email: userData.email || userData.username,
-          role: userData.role,
-          factoryAffiliation: userData.factoryAffiliation,
-          approved: true
-        };
-      }
-    }
+    return {
+      username: userData.username,
+      email: userData.email || userData.username,
+      role: userData.role,
+      factoryAffiliation: userData.factoryAffiliation,
+      approved: true,
+      twoFactorVerified: true
+    };
   } catch (e: any) {
-    if (e.message === "Account pending approval") throw e;
-    console.error("Login error:", e);
+    if (e.message === 'Account pending approval') throw e;
+    console.error('Login error:', e);
+    return null;
   }
-
-  return null;
 };
 
 // --- Admin User Management ---
