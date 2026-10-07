@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { getAdmin } from './_lib/firebaseAdmin.js';
+import { canResetExistingAdminPassword } from './_lib/adminBootstrap.js';
 
 const sha256 = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 
@@ -47,9 +48,12 @@ export default async function handler(req, res) {
       snap = q.empty ? null : q.docs[0];
     }
 
-    // 2. One-time admin bootstrap (only when no admin document exists yet)
-    if ((!snap || !snap.exists) && lower === 'admin' && process.env.ADMIN_INITIAL_PASSWORD &&
-        safeEqual(password, process.env.ADMIN_INITIAL_PASSWORD)) {
+    // One-time bootstrap for a missing admin record, or recovery for an existing
+    // admin record when the configured Vercel password matches.
+    const initialAdminPassword = process.env.ADMIN_INITIAL_PASSWORD;
+    const suppliedInitialPassword = !!initialAdminPassword && safeEqual(password, initialAdminPassword);
+
+    if ((!snap || !snap.exists) && lower === 'admin' && suppliedInitialPassword) {
       const ref = users.doc('admin');
       await ref.set({
         username: 'admin',
@@ -57,6 +61,7 @@ export default async function handler(req, res) {
         role: 'admin',
         approved: true,
         password: sha256(password),
+        adminPasswordResetUsed: true,
       });
       snap = await ref.get();
     }
@@ -65,13 +70,34 @@ export default async function handler(req, res) {
       return res.status(401).json({ success: false, message: 'Invalid email or password.' });
     }
 
-    const user = snap.data();
+    let user = snap.data();
     const hash = sha256(password);
-    const isHashMatch = safeEqual(user.password, hash);
-    const isLegacyPlain = !isHashMatch && user.password && safeEqual(user.password, password);
+    let isHashMatch = safeEqual(user.password, hash);
+    let isLegacyPlain = !isHashMatch && user.password && safeEqual(user.password, password);
+
+    if (!isHashMatch && !isLegacyPlain && suppliedInitialPassword && canResetExistingAdminPassword(user, id)) {
+      await snap.ref.update({
+        username: 'admin',
+        role: 'admin',
+        approved: true,
+        password: hash,
+        adminPasswordResetUsed: true,
+      });
+      snap = await snap.ref.get();
+      user = snap.data();
+      isHashMatch = safeEqual(user.password, hash);
+      isLegacyPlain = false;
+    }
 
     if (!isHashMatch && !isLegacyPlain) {
       return res.status(401).json({ success: false, message: 'Invalid email or password.' });
+    }
+
+    // Consume the recovery setting even when its password already matches, so
+    // it cannot later be used as a second reset credential.
+    if (lower === 'admin' && suppliedInitialPassword && user.adminPasswordResetUsed !== true) {
+      await snap.ref.update({ adminPasswordResetUsed: true });
+      user.adminPasswordResetUsed = true;
     }
     if (user.approved === false) {
       return res.status(403).json({ success: false, message: 'Account pending approval' });
