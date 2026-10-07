@@ -18,6 +18,9 @@ import {
   generateOrderStatusUpdateEmail,
   generate2FAEmail
 } from './emailQueue.js';
+import { normalizePlantId } from './api/_lib/plants.js';
+import { ensureRequiredServerEnv, sendTransactionalEmail, escapeHtml } from './api/_lib/email.js';
+import { verifySignedActionToken } from './api/_lib/actions.js';
 
 // Load environment variables
 dotenv.config();
@@ -66,34 +69,38 @@ try {
   console.warn('[Firebase] Firebase Admin could not initialize (likely missing credentials). Using in-memory storage fallback.', error.message);
 }
 
-// Configure Email Transporter (Default sender: sparevone@gmail.com)
-const smtpUser = process.env.SMTP_USER || 'sparevone@gmail.com';
-const smtpPass = process.env.SMTP_PASS || '';
+const transporter = (() => {
+  try {
+    if (!process.env.SMTP_HOST || !process.env.SMTP_PORT || !process.env.SMTP_USER || !process.env.SMTP_PASS || !process.env.SMTP_FROM) {
+      console.warn('[Email] SMTP settings are incomplete; some email flows will run in dry-run mode until the required values are configured.');
+      return nodemailer.createTransport({
+        host: 'localhost',
+        port: 25,
+        secure: false,
+        auth: { user: 'placeholder', pass: 'placeholder' },
+        logger: false
+      });
+    }
 
-const transporter = nodemailer.createTransport(
-  process.env.SMTP_HOST && process.env.SMTP_HOST !== 'smtp.gmail.com'
-    ? {
-        host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT || '587', 10),
-        secure: process.env.SMTP_SECURE === 'true',
-        auth: {
-          user: smtpUser,
-          pass: smtpPass
-        }
+    return nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT, 10),
+      secure: String(process.env.SMTP_SECURE || 'true').toLowerCase() === 'true',
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
       }
-    : {
-        service: 'gmail',
-        auth: {
-          user: smtpUser,
-          pass: smtpPass
-        }
-      }
-);
-
-const isMockEmail = !smtpPass || smtpUser === 'ethereal.user';
-if (isMockEmail) {
-  console.warn('[Email] SMTP credentials (SMTP_PASS) are not configured. Running in Mock Mode with sender sparevone@gmail.com (emails print to console).');
-}
+    });
+  } catch (error) {
+    console.warn('[Email] Failed to initialize transport:', error.message);
+    return nodemailer.createTransport({
+      host: 'localhost',
+      port: 25,
+      secure: false,
+      auth: { user: 'placeholder', pass: 'placeholder' }
+    });
+  }
+})();
 
 // Initialize global EmailQueue and register event listener
 const emailQueue = new EmailQueue(transporter);
@@ -259,7 +266,7 @@ app.post(['/api/auth/verify-otp', '/auth/verify-otp'], (req, res) => {
 });
 
 // HTTP Endpoints for Order Events & Email Notifications
-app.post(['/api/orders/created', '/orders/created'], async (req, res) => {
+app.post('/api/orders/created', async (req, res) => {
   try {
     const { order, userEmail, plantEmail, userFactory } = req.body;
     if (!order) return res.status(400).json({ success: false, message: 'Missing order data' });
@@ -267,7 +274,6 @@ app.post(['/api/orders/created', '/orders/created'], async (req, res) => {
     console.log(`[Order API] Triggering OrderCreated for Order ID: ${order.id}`);
     orderEventEmitter.emit('OrderCreated', { order, userEmail, plantEmail, userFactory });
 
-    // Sync order to Master Google Sheet ("Orders" tab)
     const sheetRes = await syncOrderToSheet(order);
 
     res.json({ success: true, message: 'Order created notifications queued & synced to Google Sheet', sheetSync: sheetRes });
@@ -277,7 +283,7 @@ app.post(['/api/orders/created', '/orders/created'], async (req, res) => {
   }
 });
 
-app.post(['/api/orders/status-updated', '/orders/status-updated'], async (req, res) => {
+app.post('/api/orders/status-updated', async (req, res) => {
   try {
     const { order, item, status, performerUsername } = req.body;
     if (!order) return res.status(400).json({ success: false, message: 'Missing order data' });
@@ -285,7 +291,6 @@ app.post(['/api/orders/status-updated', '/orders/status-updated'], async (req, r
     console.log(`[Order API] Triggering OrderStatusUpdated for Order ID: ${order.id}`);
     orderEventEmitter.emit('OrderStatusUpdated', { order, item, status, performerUsername });
 
-    // Sync order update to Master Google Sheet
     const sheetRes = await syncOrderToSheet(order);
 
     res.json({ success: true, message: 'Order status update queued & synced to Google Sheet', sheetSync: sheetRes });
@@ -297,170 +302,108 @@ app.post(['/api/orders/status-updated', '/orders/status-updated'], async (req, r
 
 // ─── Email Action Webhook (Approve / Reject from email button) ──────────────
 // Plant users click the button in their requisition email and this endpoint
-// processes the order without requiring them to log in.
-app.get(['/api/orders/action', '/orders/action'], async (req, res) => {
+// displays a confirmation page before processing the order.
+app.get('/api/orders/action', async (req, res) => {
   const { orderId, action, token } = req.query;
-
   const actionLabel = (action || '').toLowerCase();
-  if (!orderId || !['approve', 'reject'].includes(actionLabel)) {
-    return res.status(400).send(`
-      <!DOCTYPE html><html><head><meta charset="utf-8"><title>Invalid Request</title></head>
-      <body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;">
-        <h2 style="color:#ef4444;">Invalid request.</h2>
-        <p style="color:#94a3b8;">Missing orderId or action parameter.</p>
-      </body></html>
-    `);
-  }
-
-  const newStatus = actionLabel === 'approve' ? 'approved' : 'rejected';
-  const actionDisplay = actionLabel === 'approve' ? '✅ Approved' : '❌ Rejected';
-  const actionColor = actionLabel === 'approve' ? '#10b981' : '#ef4444';
   const appUrl = process.env.VITE_APP_URL || process.env.APP_URL || 'https://spareshare-33986.web.app';
 
-  console.log(`[Email Action Webhook] Order ${orderId} → ${newStatus} via email button click`);
+  if (!orderId || !['approve', 'reject'].includes(actionLabel)) {
+    return res.status(400).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Invalid Request</title></head><body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;"><h2 style="color:#ef4444;">Invalid request.</h2><p style="color:#94a3b8;">Missing orderId or action parameter.</p></body></html>`);
+  }
 
-  let orderData = null;
-  let processError = null;
+  if (!token) {
+    return res.status(400).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Missing Token</title></head><body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;"><h2 style="color:#f59e0b;">Missing security token.</h2><p style="color:#94a3b8;">This email action is missing its verification token.</p><a href="${appUrl}" style="display:inline-block;margin-top:20px;padding:10px 22px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Open Portal</a></body></html>`);
+  }
 
-  if (firestoreDb) {
-    try {
-      const orderRef = firestoreDb.collection('orders').doc(String(orderId));
-      const orderSnap = await orderRef.get();
+  try {
+    verifySignedActionToken(String(token), process.env.ACTION_SECRET);
+  } catch (error) {
+    return res.status(400).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Invalid Link</title></head><body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;"><h2 style="color:#ef4444;">This action link is invalid or expired.</h2><p style="color:#94a3b8;">${escapeHtml(error.message)}</p><a href="${appUrl}" style="display:inline-block;margin-top:20px;padding:10px 22px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Open Portal</a></body></html>`);
+  }
 
-      if (!orderSnap.exists) {
-        return res.status(404).send(`
-          <!DOCTYPE html><html><head><meta charset="utf-8"><title>Order Not Found</title></head>
-          <body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;">
-            <h2 style="color:#f59e0b;">⚠ Order Not Found</h2>
-            <p style="color:#94a3b8;">Order ID: <strong style="color:#fff;">${orderId}</strong> could not be found.</p>
-            <a href="${appUrl}" style="display:inline-block;margin-top:20px;padding:10px 22px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Open Portal</a>
-          </body></html>
-        `);
-      }
+  const actionDisplay = actionLabel === 'approve' ? 'Approve' : 'Reject';
+  const actionColor = actionLabel === 'approve' ? '#10b981' : '#ef4444';
+  const submitAction = `${appUrl}/api/orders/action`;
 
-      orderData = orderSnap.data();
+  return res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Confirm Requisition</title></head><body style="margin:0;padding:40px 20px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+    <div style="max-width:540px;width:100%;background:#0f172a;border:1px solid ${actionColor}55;border-radius:16px;padding:36px;text-align:center;">
+      <div style="font-size:52px;margin-bottom:16px;">${actionLabel === 'approve' ? '✅' : '❌'}</div>
+      <h1 style="margin:0 0 12px;font-size:24px;font-weight:700;color:${actionColor};">Confirm ${actionDisplay}</h1>
+      <p style="margin:0 0 24px;color:#94a3b8;line-height:1.6;">This will ${actionLabel === 'approve' ? 'approve' : 'reject'} requisition order <strong style="color:#fff;">${escapeHtml(String(orderId))}</strong> and notify the requester.</p>
+      <form method="POST" action="${submitAction}">
+        <input type="hidden" name="orderId" value="${escapeHtml(String(orderId))}" />
+        <input type="hidden" name="action" value="${actionLabel}" />
+        <input type="hidden" name="token" value="${escapeHtml(String(token))}" />
+        <button type="submit" style="display:inline-block;padding:14px 28px;background:${actionColor};color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;">Confirm ${actionDisplay}</button>
+      </form>
+    </div>
+  </body></html>`);
+});
 
-      // Check if already processed
-      if (orderData.status && orderData.status !== 'pending') {
-        const existingStatus = orderData.status.toUpperCase();
-        return res.send(`
-          <!DOCTYPE html><html><head><meta charset="utf-8"><title>Already Processed</title></head>
-          <body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;">
-            <div style="max-width:500px;margin:0 auto;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:36px;">
-              <h2 style="color:#f59e0b;margin:0 0 12px;">⚠ Already Processed</h2>
-              <p style="color:#94a3b8;">Order <strong style="color:#fff;">${orderId}</strong> has already been <strong style="color:#f59e0b;">${existingStatus}</strong>.</p>
-              <a href="${appUrl}" style="display:inline-block;margin-top:20px;padding:10px 22px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Open Portal</a>
-            </div>
-          </body></html>
-        `);
-      }
+app.post('/api/orders/action', async (req, res) => {
+  const payload = { ...req.query, ...(req.body || {}) };
+  const orderId = payload.orderId;
+  const action = String(payload.action || '').toLowerCase();
+  const token = payload.token;
+  const appUrl = process.env.VITE_APP_URL || process.env.APP_URL || 'https://spareshare-33986.web.app';
 
-      // Update all pending items to new status
-      const updatedItems = (orderData.items || []).map(item =>
-        item.status === 'pending' ? { ...item, status: newStatus } : item
-      );
+  if (!orderId || !['approve', 'reject'].includes(action)) {
+    return res.status(400).send('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Invalid Request</title></head><body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;"><h2 style="color:#ef4444;">Invalid action request.</h2></body></html>');
+  }
 
-      await orderRef.update({
-        status: newStatus,
-        items: updatedItems,
-        [`${newStatus}At`]: Date.now(),
-        processedVia: 'email-action-webhook'
-      });
+  try {
+    verifySignedActionToken(String(token), process.env.ACTION_SECRET);
+  } catch (error) {
+    return res.status(400).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Invalid Link</title></head><body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;"><h2 style="color:#ef4444;">This action link is invalid or expired.</h2><p style="color:#94a3b8;">${escapeHtml(error.message)}</p><a href="${appUrl}" style="display:inline-block;margin-top:20px;padding:10px 22px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Open Portal</a></body></html>`);
+  }
 
-      // Log audit action
-      try {
-        const logRef = firestoreDb.collection('audit_logs').doc();
-        await logRef.set({
-          user_id: 'email-action',
-          user_name: 'Plant User (via email)',
-          action: 'ORDER_PROCESS',
-          entity_type: 'order',
-          entity_id: String(orderId),
-          details: `Order ${orderId} ${newStatus} via email action button`,
-          created_at: Date.now()
-        });
-      } catch (auditErr) {
-        console.warn('[Email Action] Audit log failed:', auditErr.message);
-      }
+  const newStatus = action === 'approve' ? 'approved' : 'rejected';
+  const actionDisplay = action === 'approve' ? '✅ Approved' : '❌ Rejected';
+  const actionColor = action === 'approve' ? '#10b981' : '#ef4444';
 
-      // Notify requester of status update
-      try {
-        const requesterEmail = orderData.userEmail || orderData.requestedBy;
-        if (requesterEmail && requesterEmail.includes('@')) {
-          const { generateOrderStatusUpdateEmail } = await import('./emailQueue.js');
-          const firstItem = (orderData.items || [])[0] || {};
-          const statusHtml = generateOrderStatusUpdateEmail(orderData, firstItem, newStatus, 'Plant Manager');
-          const mailOpts = {
-            from: '"SpareShare Enterprise Portal" <sparevone@gmail.com>',
-            to: requesterEmail,
-            subject: `Order ${newStatus.toUpperCase()} - Ref: ${orderId}`,
-            text: `Hello,\n\nYour order ${orderId} has been ${newStatus} by the plant manager.\n\nThank you,\nSpare Parts Portal`,
-            html: statusHtml
-          };
-          emailQueue.addJob(mailOpts);
-          console.log(`[Email Action] Status update email queued to ${requesterEmail}`);
-        }
-      } catch (mailErr) {
-        console.warn('[Email Action] Status notification email failed:', mailErr.message);
-      }
+  if (!firestoreDb) {
+    return res.status(500).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head><body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;"><div style="max-width:500px;margin:0 auto;background:#0f172a;border:1px solid #7f1d1d;border-radius:12px;padding:36px;"><h2 style="color:#ef4444;">Processing Error</h2><p style="color:#94a3b8;">Database not connected.</p></div></body></html>`);
+  }
 
-    } catch (err) {
-      processError = err.message;
-      console.error('[Email Action Webhook Error]:', err);
+  try {
+    const orderRef = firestoreDb.collection('orders').doc(String(orderId));
+    const orderSnap = await orderRef.get();
+    if (!orderSnap.exists) {
+      return res.status(404).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Order Not Found</title></head><body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;"><h2 style="color:#f59e0b;">⚠ Order Not Found</h2><p style="color:#94a3b8;">Order ID: <strong style="color:#fff;">${escapeHtml(String(orderId))}</strong> could not be found.</p><a href="${appUrl}" style="display:inline-block;margin-top:20px;padding:10px 22px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Open Portal</a></body></html>`);
     }
-  } else {
-    processError = 'Database not connected. Please process order in the portal directly.';
+
+    const orderData = orderSnap.data();
+    if (orderData.status && orderData.status !== 'pending') {
+      return res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Already Processed</title></head><body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;"><div style="max-width:500px;margin:0 auto;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:36px;"><h2 style="color:#f59e0b;margin:0 0 12px;">⚠ Already Processed</h2><p style="color:#94a3b8;">Order <strong style="color:#fff;">${escapeHtml(String(orderId))}</strong> has already been <strong style="color:#f59e0b;">${escapeHtml(String(orderData.status).toUpperCase())}</strong>.</p><a href="${appUrl}" style="display:inline-block;margin-top:20px;padding:10px 22px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Open Portal</a></div></body></html>`);
+    }
+
+    const updatedItems = (orderData.items || []).map(item => item.status === 'pending' ? { ...item, status: newStatus } : item);
+    await orderRef.update({
+      status: newStatus,
+      items: updatedItems,
+      [`${newStatus}At`]: Date.now(),
+      processedVia: 'email-action-webhook'
+    });
+
+    const requesterEmail = orderData.userEmail || orderData.requestedBy;
+    if (requesterEmail && requesterEmail.includes('@')) {
+      const { generateOrderStatusUpdateEmail } = await import('./emailQueue.js');
+      const mailOpts = {
+        from: process.env.SMTP_FROM || 'SpareShare Enterprise Portal <sparevone@gmail.com>',
+        to: requesterEmail,
+        subject: `Order ${newStatus.toUpperCase()} - Ref: ${orderId}`,
+        text: `Hello,\n\nYour order ${orderId} has been ${newStatus}.`,
+        html: generateOrderStatusUpdateEmail(orderData, orderData.items[0], newStatus, 'Plant Manager')
+      };
+      emailQueue.addJob(mailOpts);
+    }
+
+    return res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Order ${actionDisplay}</title></head><body style="margin:0;padding:40px 20px;background:#0b1120;font-family:Arial,sans-serif;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;"><div style="max-width:520px;width:100%;background:#0f172a;border:1px solid ${actionColor}55;border-radius:16px;padding:40px 36px;box-shadow:0 20px 40px rgba(0,0,0,0.4);text-align:center;"><div style="font-size:52px;margin-bottom:16px;">${action === 'approve' ? '✅' : '❌'}</div><h1 style="margin:0 0 8px;font-size:24px;font-weight:700;color:${actionColor};">Order ${actionDisplay}</h1><p style="margin:0 0 24px;color:#94a3b8;font-size:15px;line-height:1.6;">The spare part requisition order has been <strong style="color:${actionColor};">${newStatus}</strong> successfully.</p><a href="${appUrl}" target="_blank" style="display:inline-block;padding:12px 28px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:14px;letter-spacing:0.03em;">Open SpareShare Portal →</a><p style="margin-top:20px;font-size:11px;color:#475569;">SpareShare Enterprise Portal · sparevone@gmail.com</p></div></body></html>`);
+  } catch (error) {
+    console.error('[Email Action Webhook Error]:', error);
+    return res.status(500).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head><body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;"><div style="max-width:500px;margin:0 auto;background:#0f172a;border:1px solid #7f1d1d;border-radius:12px;padding:36px;"><h2 style="color:#ef4444;">Processing Error</h2><p style="color:#94a3b8;">${escapeHtml(error.message)}</p></div></body></html>`);
   }
-
-  if (processError) {
-    return res.status(500).send(`
-      <!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head>
-      <body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;">
-        <div style="max-width:500px;margin:0 auto;background:#0f172a;border:1px solid #7f1d1d;border-radius:12px;padding:36px;">
-          <h2 style="color:#ef4444;">Processing Error</h2>
-          <p style="color:#94a3b8;">${processError}</p>
-          <a href="${appUrl}" style="display:inline-block;margin-top:20px;padding:10px 22px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Open Portal</a>
-        </div>
-      </body></html>
-    `);
-  }
-
-  // Success page
-  const orderSummary = orderData ? `
-    <p style="color:#94a3b8;font-size:14px;margin:4px 0;">Order ID: <strong style="color:#fff;">${orderId}</strong></p>
-    <p style="color:#94a3b8;font-size:14px;margin:4px 0;">Items: <strong style="color:#fff;">${(orderData.items || []).length}</strong></p>
-    <p style="color:#94a3b8;font-size:14px;margin:4px 0;">Requested by: <strong style="color:#fff;">${orderData.userEmail || orderData.requestedBy || '—'}</strong></p>
-  ` : '';
-
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Order ${actionDisplay}</title>
-    </head>
-    <body style="margin:0;padding:40px 20px;background:#0b1120;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;">
-      <div style="max-width:520px;width:100%;background:#0f172a;border:1px solid ${actionColor}55;border-radius:16px;padding:40px 36px;box-shadow:0 20px 40px rgba(0,0,0,0.4);text-align:center;">
-        <div style="font-size:52px;margin-bottom:16px;">${actionLabel === 'approve' ? '✅' : '❌'}</div>
-        <h1 style="margin:0 0 8px;font-size:24px;font-weight:700;color:${actionColor};">Order ${actionDisplay}</h1>
-        <p style="margin:0 0 24px;color:#94a3b8;font-size:15px;line-height:1.6;">
-          The spare part requisition order has been <strong style="color:${actionColor};">${newStatus}</strong> successfully.
-          The requester has been notified via email.
-        </p>
-        <div style="background:#1e293b;border-radius:10px;padding:16px 20px;text-align:left;margin-bottom:24px;border:1px solid #334155;">
-          ${orderSummary}
-        </div>
-        <a href="${appUrl}" target="_blank" style="display:inline-block;padding:12px 28px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:14px;letter-spacing:0.03em;">
-          Open SpareShare Portal →
-        </a>
-        <p style="margin-top:20px;font-size:11px;color:#475569;">
-          SpareShare Enterprise Portal · sparevone@gmail.com
-        </p>
-      </div>
-    </body>
-    </html>
-  `);
 });
 
 app.post(['/api/send-email', '/send-email'], (req, res) => {
