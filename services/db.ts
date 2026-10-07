@@ -795,7 +795,18 @@ export const loginUser = async (identifier: string, password: string): Promise<U
 
   if (res && res.ok) {
     const data = await res.json();
-    await signInWithCustomToken(auth, data.token);
+    try {
+      await signInWithCustomToken(auth, data.token);
+    } catch (authErr: any) {
+      const message = authErr?.message || '';
+      const code = authErr?.code || '';
+
+      if (code === 'auth/configuration-not-found' || /CONFIGURATION_NOT_FOUND|auth\/configuration-not-found/i.test(message)) {
+        throw new Error('Firebase Authentication is not initialized for this project. The administrator must enable Authentication in Firebase Console, then redeploy the app.');
+      }
+
+      throw authErr;
+    }
     return { ...data.user, approved: true, twoFactorVerified: true } as User;
   }
   if (res && res.status === 401) return null;

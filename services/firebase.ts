@@ -6,13 +6,13 @@ import { getAuth, setPersistence, browserSessionPersistence } from "firebase/aut
 // Firebase web config. These values are public by design (they ship to every browser);
 // access control is enforced by firestore.rules + the /api/login token.
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyAMl2OrlGj_O9qeh02KeKuw6lA_pZLG4XM",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "spareshare-33986.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "spareshare-33986",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "spareshare-33986.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "1007889806643",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:1007889806643:web:30ecb5eb55c1cf0f187a46",
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-0F513EG0SJ"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyCOJAgJMobTaW6WSeFN5di7-4zko3OkLK0",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "spareshare-33986-f2494.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "spareshare-33986-f2494",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "spareshare-33986-f2494.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "649710479060",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:649710479060:web:0118a45c1cf5273f3cbd41",
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-NSYYHFGZE8"
 };
 
 // Initialize Firebase
