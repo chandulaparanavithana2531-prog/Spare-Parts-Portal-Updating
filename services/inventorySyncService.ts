@@ -12,6 +12,7 @@
 import * as XLSX from 'xlsx';
 import type { SparePart } from '../types.ts';
 import { getStoredInventory, setStoredInventory } from './idbStorage';
+import { normalizePlantId, PLANT_NAMES } from '../api/_lib/plants.js';
 
 // ---------------------------------------------------------------------------
 // Canonical Row Schema
@@ -165,13 +166,9 @@ export function isInvalidItemCode(raw: any): boolean {
  * Normalises raw plant name input or plant key ('LT', 'LWT', 'RCL-H', 'RCL-E') to canonical PlantId
  */
 export function resolvePlantId(rawName: string | undefined | null, fallback: string = ''): PlantId {
-  if (!rawName) return (fallback || 'Lanka Tiles') as PlantId;
-  const s = rawName.trim().toLowerCase();
-  if (s === 'lwt' || (s.includes('lanka') && s.includes('wall'))) return 'Lanka Wall Tiles';
-  if (s === 'lt' || (s.includes('lanka') && s.includes('tile')) || s.includes('lanka tiles')) return 'Lanka Tiles';
-  if (s === 'rcl-h' || s === 'rclh' || s.includes('horana') || s.includes('rocell horana')) return 'Rocell Horana';
-  if (s === 'rcl-e' || s === 'rcle' || s.includes('eheliyagoda') || s.includes('rocell eheliyagoda') || s === 'gsc') return 'Rocell Eheliyagoda';
-  return (fallback || rawName) as PlantId;
+  const value = rawName || fallback;
+  const plantId = normalizePlantId(value);
+  return PLANT_NAMES[plantId] as PlantId;
 }
 
 // ---------------------------------------------------------------------------

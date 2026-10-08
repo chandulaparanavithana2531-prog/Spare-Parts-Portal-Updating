@@ -16,7 +16,7 @@ export function getAdmin() {
 
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (!raw) {
-    initError = 'FIREBASE_SERVICE_ACCOUNT is not set';
+    initError = 'Missing required environment variable: FIREBASE_SERVICE_ACCOUNT.';
     console.warn('[firebaseAdmin] ' + initError);
     return null;
   }
@@ -32,8 +32,12 @@ export function getAdmin() {
     initialised = true;
     return admin;
   } catch (err) {
-    initError = err.message;
-    console.error('[firebaseAdmin] Failed to initialise:', err.message);
+    initError = 'Firebase Admin initialization failed; verify the server service-account configuration.';
+    console.error('[firebaseAdmin] Failed to initialize Firebase Admin; check server configuration.');
     return null;
   }
+}
+
+export function getAdminError() {
+  return initError;
 }

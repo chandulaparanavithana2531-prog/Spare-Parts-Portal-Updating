@@ -249,7 +249,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
     const std = STANDARD_PLANT_ACCOUNTS.find(s => s.factoryAffiliation === plantName);
     return {
       username: plantName,
-      email: std?.email || 'plant@rcl.lk',
+      email: std?.email || '',
       role: 'user' as UserRole,
       factoryAffiliation: plantName,
       approved: true

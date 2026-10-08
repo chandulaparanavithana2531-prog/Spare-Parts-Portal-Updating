@@ -413,57 +413,14 @@ export async function uploadHistoricalConsumptionFile(
 }
 
 /**
- * Sends an email notification by calling the backend /api/send-email endpoint.
- */
-export async function sendEmailNotification(emailData: {
-  to: string;
-  subject: string;
-  text: string;
-  html?: string;
-}): Promise<{ success: boolean; message?: string }> {
-  try {
-    const API_URL = getApiUrl();
-    console.log(`[Email Service] Sending notification to: ${emailData.to}`);
-    const response = await fetch(`${API_URL}/api/send-email`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(emailData),
-    });
-    
-    let resolvedResponse = response;
-    if (!resolvedResponse.ok && resolvedResponse.status === 404) {
-      resolvedResponse = await fetch(`${API_URL}/send-email`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(emailData),
-      });
-    }
-
-    if (!resolvedResponse.ok) {
-      throw new Error(`Server returned status: ${resolvedResponse.status}`);
-    }
-
-    return await resolvedResponse.json();
-  } catch (error) {
-    console.warn(`[Email Service] Failed to send email notification to ${emailData.to}. Error:`, error);
-    return { success: false, message: String(error) };
-  }
-}
-
-/**
  * Notifies the backend that a new order has been created.
  * Triggers the OrderCreated backend event and runs the background email job.
  */
 export async function notifyOrderCreated(eventData: {
   order: any;
   userEmail: string;
-  plantEmail: string;
   userFactory: string;
-}): Promise<{ success: boolean; message?: string }> {
+}): Promise<{ success: boolean; message?: string; emailStatus?: string; emailStatusReason?: string | null }> {
   try {
     const API_URL = getApiUrl();
     console.log(`[API Service] Notifying backend of OrderCreated for order: ${eventData.order.id}`);
@@ -482,7 +439,7 @@ export async function notifyOrderCreated(eventData: {
 
     return await response.json();
   } catch (error) {
-    console.warn(`[API Service] Failed to notify backend of OrderCreated event. Error:`, error);
+    console.warn(`[API Service] Order email endpoint could not be reached for order ${eventData.order.id}.`);
     return { success: false, message: String(error) };
   }
 }
@@ -497,7 +454,7 @@ export async function notifyOrderStatusUpdated(eventData: {
   performerUsername: string;
 }): Promise<{ success: boolean; message?: string }> {
   try {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    const API_URL = getApiUrl();
     console.log(`[API Service] Notifying backend of OrderStatusUpdated for order: ${eventData.order.id}`);
 
     let response = await fetch(`${API_URL}/api/orders/status-updated`, {

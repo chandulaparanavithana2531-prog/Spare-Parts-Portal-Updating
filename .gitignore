@@ -26,6 +26,10 @@ dist-ssr
 .vercel
 .env*
 !.env.example
+*.zip
+*.xlsx
+*.xls
+*.xlsm
 
 # Firebase / Google service account keys
 *service-account*.json

@@ -64,7 +64,7 @@ export function normalizePlantId(rawValue, options = {}) {
   }
 
   for (const [plantId, aliases] of Object.entries(ALIAS_MAP)) {
-    if (aliases.some(alias => candidate === alias || candidate.includes(alias))) {
+    if (aliases.some(alias => normalizeAliasInput(alias) === candidate)) {
       return plantId;
     }
   }

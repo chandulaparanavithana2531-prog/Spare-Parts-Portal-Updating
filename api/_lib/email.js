@@ -10,6 +10,8 @@ const REQUIRED_ENV_VARS = [
   'ACTION_SECRET'
 ];
 
+let transporter;
+
 export function getRequiredEnv(name) {
   const value = process.env[name];
   if (value === undefined || String(value).trim() === '') {
@@ -26,9 +28,13 @@ export function ensureRequiredServerEnv() {
 }
 
 export function getSenderAddress() {
-  const smtpUser = process.env.SMTP_USER || 'sparevone@gmail.com';
-  const smtpFrom = process.env.SMTP_FROM || `SpareShare Enterprise Portal <${smtpUser}>`;
-  return smtpFrom.includes('<') ? smtpFrom : `"SpareShare Enterprise Portal" <${smtpUser}>`;
+  const smtpUser = getRequiredEnv('SMTP_USER').trim().toLowerCase();
+  const sender = getRequiredEnv('SMTP_FROM');
+  const fromAddress = (sender.match(/<([^>]+)>/)?.[1] || sender).trim().toLowerCase();
+  if (smtpUser !== 'sparevone@gmail.com' || fromAddress !== 'sparevone@gmail.com') {
+    throw new Error('Email must be configured to send only from sparevone@gmail.com.');
+  }
+  return sender;
 }
 
 export function isDryRunEnabled() {
@@ -57,9 +63,13 @@ export function getSmtpTransportConfig() {
 }
 
 export async function sendTransactionalEmail({ to, subject, text, html, from } = {}) {
-  const sender = from || getSenderAddress();
+  const sender = getSenderAddress();
   if (!to || !subject) {
     throw new Error('Missing required email fields: to and subject');
+  }
+
+  if (from && from !== sender) {
+    throw new Error('Email sender must match the configured SMTP_FROM address.');
   }
 
   if (isDryRunEnabled()) {
@@ -67,7 +77,7 @@ export async function sendTransactionalEmail({ to, subject, text, html, from } =
     return { dryRun: true, from: sender, to, messageId: 'dry-run' };
   }
 
-  const transporter = nodemailer.createTransport(getSmtpTransportConfig());
+  if (!transporter) transporter = nodemailer.createTransport(getSmtpTransportConfig());
   const mailResult = await transporter.sendMail({
     from: sender,
     replyTo: process.env.SMTP_FROM || sender,

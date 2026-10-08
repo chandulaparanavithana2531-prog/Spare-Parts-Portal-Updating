@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Order, OrderStatus, User, SparePart } from '../types';
-import { getOrders, processOrderItem, clearOrders } from '../services/db';
-import { CheckCircle, XCircle, ChevronDown, ChevronUp, User as UserIcon, ArrowRight, ArrowLeft, Trash2, RotateCcw } from 'lucide-react';
+import { getOrders, processOrderItem, clearOrders, resendOrderRequestEmail } from '../services/db';
+import { CheckCircle, XCircle, ChevronDown, ChevronUp, User as UserIcon, ArrowRight, ArrowLeft, Trash2, RotateCcw, Mail, AlertTriangle } from 'lucide-react';
 
 interface OrderManagementProps {
   currentUser: User;
@@ -12,6 +12,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ currentUser, a
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+  const [resendingOrderId, setResendingOrderId] = useState<string | null>(null);
 
   const fetchOrders = async () => {
     setLoading(true);
@@ -76,6 +77,20 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ currentUser, a
       newSet.add(orderId);
     }
     setExpandedOrders(newSet);
+  };
+
+  const handleResendEmail = async (orderId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setResendingOrderId(orderId);
+    try {
+      const result = await resendOrderRequestEmail(orderId);
+      await fetchOrders();
+      if (!result.success) alert(result.message || 'The request email could not be sent. Check the order email status for details.');
+    } catch (error: any) {
+      alert(error.message || 'The request email could not be resent.');
+    } finally {
+      setResendingOrderId(null);
+    }
   };
 
   const getStatusColor = (status: OrderStatus) => {
@@ -234,6 +249,26 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ currentUser, a
                 {/* Expanded Items List */}
                 {isExpanded && displayItems && (
                   <div className="bg-gray-50/50 p-5 border-t border-gray-100 animate-in slide-in-from-top-2 duration-200">
+                    {currentUser.role === 'admin' && (order.emailStatus === 'no_recipients' || order.emailStatus === 'failed') && (
+                      <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                        <div className="flex items-start gap-2 text-sm">
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                          <div>
+                            <p className="font-bold">Request email {order.emailStatus === 'no_recipients' ? 'was not sent: no active target-plant users with email addresses were found.' : 'delivery failed.'}</p>
+                            {order.emailStatusReason && <p className="mt-1 text-xs">{order.emailStatusReason}</p>}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={resendingOrderId === order.id}
+                          onClick={(event) => handleResendEmail(order.id, event)}
+                          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-amber-700 px-3 py-2 text-xs font-bold text-white hover:bg-amber-800 disabled:opacity-50"
+                        >
+                          <Mail className="h-3.5 w-3.5" />
+                          {resendingOrderId === order.id ? 'Resending…' : 'Resend request email'}
+                        </button>
+                      </div>
+                    )}
                     <table className="w-full text-sm text-left">
                       <thead className="text-xs text-gray-500 uppercase bg-gray-100/50">
                         <tr>

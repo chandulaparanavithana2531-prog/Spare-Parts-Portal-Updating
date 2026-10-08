@@ -10,6 +10,23 @@ export { getStoredInventory, setStoredInventory };
 
 const API_URL = (import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL !== '/api-backend') ? import.meta.env.VITE_API_URL : '';
 
+export const resendOrderRequestEmail = async (orderId: string): Promise<{ success: boolean; message?: string; emailStatus?: string }> => {
+  const currentUser = auth.currentUser;
+  if (!currentUser) throw new Error('Sign in again before resending an order email.');
+  const token = await currentUser.getIdToken();
+  const response = await fetch(`${API_URL}/api/orders/resend-email`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify({ orderId })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.message || `Resend failed (HTTP ${response.status}).`);
+  return result;
+};
+
 // --- Inventory Operations ---
 
 export const saveInventory = async (parts: SparePart[], performerUsername: string) => {
@@ -307,13 +324,6 @@ export const updateSparePart = async (part: SparePart, performerUsername: string
 
 // --- Order Operations ---
 
-const PLANT_EMAILS: Record<string, string> = {
-  'Lanka Tiles': 'lankatiles.admin@gmail.com',
-  'Lanka Wall Tiles': 'lankawalltiles.admin@gmail.com',
-  'Rocell Horana': 'rocellhorana.admin@gmail.com',
-  'Rocell Eheliyagoda': 'rocelleheliyagoda.admin@gmail.com'
-};
-
 export const createOrder = async (
   items: import('../types').CartItem[],
   username: string
@@ -328,31 +338,18 @@ export const createOrder = async (
     itemsByFactory[item.factoryId].push(item);
   });
 
-  // Fetch all registered user accounts to look up target plant email addresses
-  let allUsers: User[] = [];
-  try {
-    const usersRef = collection(db, 'users');
-    const userDocs = await getDocs(usersRef);
-    userDocs.forEach(docSnap => {
-      if (docSnap.exists()) {
-        allUsers.push(docSnap.data() as User);
-      }
-    });
-  } catch (e) {
-    console.warn("[DB] Failed to fetch users for target plant email lookup:", e);
-  }
-
-  // Fetch ordering user's plant affiliation
-  let userFactory = 'Unknown Plant';
+  let userFactory = '';
+  let userEmail = '';
   try {
     const userDocRef = doc(db, 'users', username);
     const userSnap = await getDoc(userDocRef);
     if (userSnap.exists()) {
       const uData = userSnap.data() as User;
-      userFactory = uData.factoryAffiliation || 'Unknown Plant';
+      userFactory = uData.factoryAffiliation || '';
+      userEmail = uData.email || (username.includes('@') ? username : '');
     }
   } catch (e) {
-    console.warn("[DB] Failed to fetch ordering user factory affiliation:", e);
+    console.warn('[DB] Unable to retrieve registered requester profile; server will resolve it from Firestore.');
   }
 
   const localOrdersToSave: Order[] = [];
@@ -361,24 +358,6 @@ export const createOrder = async (
   for (const [factoryId, factoryItems] of Object.entries(itemsByFactory)) {
     const orderId = `ord-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
     const totalValue = factoryItems.reduce((sum, item) => sum + (item.unitCost * item.orderQty), 0);
-
-    // Resolve target plant user account emails by matching factoryId with user.factoryAffiliation
-    const targetPlantUsers = allUsers.filter(u => {
-      if (!u.factoryAffiliation) return false;
-      return resolvePlantId(u.factoryAffiliation) === resolvePlantId(factoryId);
-    });
-
-    const userEmails = targetPlantUsers
-      .map(u => u.email || u.username)
-      .filter(email => email && email.includes('@'));
-
-    let plantEmail = '';
-    if (userEmails.length > 0) {
-      plantEmail = Array.from(new Set(userEmails)).join(', ');
-    } else {
-      const canonicalName = resolvePlantId(factoryId);
-      plantEmail = ''; // Resolved on the server from approved users of the supplying plant
-    }
 
     const order: Order = {
       id: orderId,
@@ -396,8 +375,9 @@ export const createOrder = async (
       })),
       totalValue,
       requestedBy: username,
-      userEmail: username, // Explicitly include user email address in Firestore order document
-      plantEmail: plantEmail, // Explicitly include target plant user email(s) in Firestore order document
+      userEmail,
+      userFactory,
+      plantEmail: '',
       status: 'pending',
       createdAt: Date.now()
     };
@@ -433,12 +413,14 @@ export const createOrder = async (
     try {
       const { notifyOrderCreated } = await import('./apiService');
       for (const order of localOrdersToSave) {
-        await notifyOrderCreated({
+        const emailResult = await notifyOrderCreated({
           order,
-          userEmail: username,
-          plantEmail: order.plantEmail || '',
+          userEmail: order.userEmail || '',
           userFactory
         });
+        if (!emailResult.success) {
+          console.warn(`[DB] Order ${order.id} email status: ${emailResult.emailStatus || 'failed'}${emailResult.emailStatusReason ? ` (${emailResult.emailStatusReason})` : ''}`);
+        }
       }
     } catch (emailErr) {
       console.warn("[DB] Failed to notify backend of OrderCreated event:", emailErr);
@@ -634,10 +616,10 @@ const hashPassword = async (password: string): Promise<string> => {
 
 export const STANDARD_PLANT_ACCOUNTS = [
   { username: 'admin', email: 'sparevone@gmail.com', role: 'admin' as const, factoryAffiliation: undefined, approved: true },
-  { username: 'Lanka Tiles', email: 'lankatiles.admin@gmail.com', role: 'user' as const, factoryAffiliation: 'Lanka Tiles', approved: true },
-  { username: 'Lanka Wall Tiles', email: 'lankawalltiles.admin@gmail.com', role: 'user' as const, factoryAffiliation: 'Lanka Wall Tiles', approved: true },
-  { username: 'Rocell Horana', email: 'rocellhorana.admin@gmail.com', role: 'user' as const, factoryAffiliation: 'Rocell Horana', approved: true },
-  { username: 'Rocell Eheliyagoda', email: 'rocelleheliyagoda.admin@gmail.com', role: 'user' as const, factoryAffiliation: 'Rocell Eheliyagoda', approved: true },
+  { username: 'Lanka Tiles', email: '', role: 'user' as const, factoryAffiliation: 'Lanka Tiles', approved: true },
+  { username: 'Lanka Wall Tiles', email: '', role: 'user' as const, factoryAffiliation: 'Lanka Wall Tiles', approved: true },
+  { username: 'Rocell Horana', email: '', role: 'user' as const, factoryAffiliation: 'Rocell Horana', approved: true },
+  { username: 'Rocell Eheliyagoda', email: '', role: 'user' as const, factoryAffiliation: 'Rocell Eheliyagoda', approved: true },
 ];
 
 export const registerUser = async (user: User, password: string): Promise<void> => {

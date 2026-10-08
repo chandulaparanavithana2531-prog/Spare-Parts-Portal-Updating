@@ -2,25 +2,18 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
-import admin from 'firebase-admin';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import fs from 'fs';
-import nodemailer from 'nodemailer';
-import { syncPortalReportToSheet, syncFromSheetToPortal, syncOrderToSheet } from './services/googleSheets.js';
-import {
-  orderEventEmitter,
-  EmailQueue,
-  generateCustomerConfirmationEmail,
-  generatePlantNotificationEmail,
-  generateOrderStatusUpdateEmail,
-  generate2FAEmail
-} from './emailQueue.js';
-import { normalizePlantId } from './api/_lib/plants.js';
+import { syncPortalReportToSheet, syncFromSheetToPortal } from './services/googleSheets.js';
+import { generate2FAEmail } from './api/_lib/otpEmail.js';
+import { getAdmin } from './api/_lib/firebaseAdmin.js';
 import { ensureRequiredServerEnv, sendTransactionalEmail, escapeHtml } from './api/_lib/email.js';
-import { verifySignedActionToken } from './api/_lib/actions.js';
+import orderCreatedHandler from './api/orders/created.js';
+import orderStatusUpdatedHandler from './api/orders/status-updated.js';
+import orderActionHandler from './api/orders/action.js';
 
 // Load environment variables
 dotenv.config();
@@ -59,135 +52,11 @@ try {
 // Initialize Firebase Admin with project ID, handling missing credentials gracefully
 let firestoreDb = null;
 try {
-  const projectId = process.env.VITE_FIREBASE_PROJECT_ID || 'spareshare-33986';
-  admin.initializeApp({
-    projectId: projectId
-  });
-  firestoreDb = admin.firestore();
-  console.log(`[Firebase] Initialized Admin SDK for project: ${projectId}`);
+  const admin = getAdmin();
+  if (admin) firestoreDb = admin.firestore();
 } catch (error) {
   console.warn('[Firebase] Firebase Admin could not initialize (likely missing credentials). Using in-memory storage fallback.', error.message);
 }
-
-const transporter = (() => {
-  try {
-    if (!process.env.SMTP_HOST || !process.env.SMTP_PORT || !process.env.SMTP_USER || !process.env.SMTP_PASS || !process.env.SMTP_FROM) {
-      console.warn('[Email] SMTP settings are incomplete; some email flows will run in dry-run mode until the required values are configured.');
-      return nodemailer.createTransport({
-        host: 'localhost',
-        port: 25,
-        secure: false,
-        auth: { user: 'placeholder', pass: 'placeholder' },
-        logger: false
-      });
-    }
-
-    return nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT, 10),
-      secure: String(process.env.SMTP_SECURE || 'true').toLowerCase() === 'true',
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-      }
-    });
-  } catch (error) {
-    console.warn('[Email] Failed to initialize transport:', error.message);
-    return nodemailer.createTransport({
-      host: 'localhost',
-      port: 25,
-      secure: false,
-      auth: { user: 'placeholder', pass: 'placeholder' }
-    });
-  }
-})();
-
-// Initialize global EmailQueue and register event listener
-const emailQueue = new EmailQueue(transporter);
-
-orderEventEmitter.on('OrderCreated', async ({ order, userEmail, plantEmail, userFactory }) => {
-  console.log(`[Event Listener] OrderCreated received for Order ID: ${order.id}. Enqueuing notification emails...`);
-
-  // 1. Calculate Estimated Fulfillment Timeframe
-  const isCrossPlant = order.items && order.items.length > 0 && order.items[0].fromFactory !== userFactory;
-  const estimatedTimeframe = isCrossPlant ? '5 Business Days (Cross-Plant Transfer)' : '2 Business Days (Local Fulfillment)';
-
-  // Determine recipient plant email(s) from user accounts if needed
-  let recipientPlantEmail = plantEmail;
-  const targetFactory = (order.items && order.items.length > 0 && order.items[0].fromFactory) ? order.items[0].fromFactory : '';
-
-  if (firestoreDb && targetFactory && (!recipientPlantEmail || recipientPlantEmail.includes('admin@gmail.com'))) {
-    try {
-      const usersSnap = await firestoreDb.collection('users').get();
-      const plantUserEmails = [];
-      usersSnap.forEach(docSnap => {
-        const uData = docSnap.data();
-        if (uData.factoryAffiliation && resolvePlantIdServer(uData.factoryAffiliation) === resolvePlantIdServer(targetFactory)) {
-          const email = uData.email || uData.username;
-          if (email && email.includes('@')) {
-            plantUserEmails.push(email);
-          }
-        }
-      });
-      if (plantUserEmails.length > 0) {
-        recipientPlantEmail = Array.from(new Set(plantUserEmails)).join(', ');
-      }
-    } catch (e) {
-      console.warn('[Event Listener] Firestore plant user lookup warning:', e.message);
-    }
-  }
-
-  // 2. Queue Recipient 1: User Confirmation Email
-  const userHtml = generateCustomerConfirmationEmail(order, userEmail, estimatedTimeframe);
-  const userMailOptions = {
-    from: '"SpareShare Enterprise Portal" <sparevone@gmail.com>',
-    replyTo: 'sparevone@gmail.com',
-    to: userEmail,
-    subject: `Order Confirmation - Spare Parts Portal (Order Ref: ${order.id})`,
-    text: `Hello ${userEmail},\n\nYour order has been successfully placed.\n\nOrder ID: ${order.id}\nEstimated fulfillment: ${estimatedTimeframe}\n\nThank you,\nSpare Parts Portal`,
-    html: userHtml
-  };
-  emailQueue.addJob(userMailOptions);
-
-  // 3. Queue Recipient 2: Plant Work Order Dispatch Alert (Sent to created user account emails of target plant)
-  const plantHtml = generatePlantNotificationEmail(order, recipientPlantEmail, userFactory || 'Unknown Plant', userEmail);
-  const plantMailOptions = {
-    from: '"SpareShare Enterprise Portal" <sparevone@gmail.com>',
-    replyTo: 'sparevone@gmail.com',
-    to: recipientPlantEmail,
-    subject: `Action Required: New Work Order Dispatch (Order Ref: ${order.id})`,
-    text: `Hello Plant Manager,\n\nA new work order has been requested from your plant inventory.\n\nOrder ID: ${order.id}\nCustomer: ${userEmail}\n\nPlease prepare the items.\n\nThank you,\nSpare Parts Portal`,
-    html: plantHtml
-  };
-  emailQueue.addJob(plantMailOptions);
-
-  // 4. Sync Order to Master Google Sheet ("Orders" tab)
-  syncOrderToSheet(order).catch(err => {
-    console.warn('[GoogleSheets Sync Warning] Failed to sync new order to sheet:', err.message);
-  });
-});
-
-orderEventEmitter.on('OrderStatusUpdated', ({ order, item, status, performerUsername }) => {
-  console.log(`[Event Listener] OrderStatusUpdated received for Order ID: ${order.id}, item: ${item?.sparePartDescription}, status: ${status}`);
-
-  // Send status email to user
-  if (order.requestedBy && order.requestedBy.includes('@')) {
-    const html = generateOrderStatusUpdateEmail(order, item || order.items[0], status, performerUsername);
-    const mailOptions = {
-      from: process.env.SMTP_FROM || '"SpareShare Operations" <sparevone@gmail.com>',
-      to: order.requestedBy,
-      subject: `Order Update - Ref: ${order.id} (${(status || '').toUpperCase()})`,
-      text: `Hello ${order.requestedBy},\n\nYour order ${order.id} status has been updated to ${status} by ${performerUsername}.\n\nThank you,\nSpare Parts Portal`,
-      html
-    };
-    emailQueue.addJob(mailOptions);
-  }
-
-  // Also sync updated order to Master Google Sheet
-  syncOrderToSheet(order).catch(err => {
-    console.warn('[GoogleSheets Sync Warning] Failed to sync updated order to sheet:', err.message);
-  });
-});
 
 // Global 2FA OTP Memory Store
 const otpStore = new Map();
@@ -195,7 +64,7 @@ const otpStore = new Map();
 // ---------------------------------------------------------------------------
 // 2-Step Verification (2FA OTP) Endpoints
 // ---------------------------------------------------------------------------
-app.post(['/api/auth/send-otp', '/auth/send-otp'], (req, res) => {
+app.post(['/api/auth/send-otp', '/auth/send-otp'], async (req, res) => {
   try {
     const { username, email } = req.body;
     if (!username) return res.status(400).json({ success: false, message: 'Missing username' });
@@ -205,26 +74,18 @@ app.post(['/api/auth/send-otp', '/auth/send-otp'], (req, res) => {
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes validity
 
     otpStore.set(username.toLowerCase(), { code: otpCode, expiresAt });
-    console.log(`\n=================== 2-STEP VERIFICATION OTP GENERATED ===================`);
-    console.log(`User:            ${username}`);
-    console.log(`Target Email:    ${targetEmail}`);
-    console.log(`Dispatched From: sparevone@gmail.com`);
-    console.log(`OTP Passcode:    ${otpCode}`);
-    console.log(`Expires At:      ${new Date(expiresAt).toLocaleTimeString()}`);
-    console.log(`========================================================================\n`);
-
     // Queue 2FA Email via sparevone@gmail.com
-    const html = generate2FAEmail(username, otpCode);
-    const mailOptions = {
-      from: process.env.SMTP_FROM || '"SpareShare Security" <sparevone@gmail.com>',
+    const html = generate2FAEmail(escapeHtml(username), escapeHtml(otpCode));
+    ensureRequiredServerEnv();
+    await sendTransactionalEmail({
       to: targetEmail,
-      subject: `SpareShare 2-Step Verification Code: ${otpCode}`,
+      subject: 'SpareShare 2-Step Verification Code',
       text: `Hello ${username},\n\nYour SpareShare 2-Step Verification Code is: ${otpCode}\nValid for 5 minutes.\n\nDispatched from sparevone@gmail.com`,
-      html
-    };
-    emailQueue.addJob(mailOptions);
+      html,
+      from: process.env.SMTP_FROM
+    });
 
-    res.json({ success: true, message: `2-Step verification passcode dispatched from sparevone@gmail.com to ${targetEmail}`, otpCode });
+    res.json({ success: true, message: '2-Step verification passcode dispatched.' });
   } catch (err) {
     console.error('[2FA Send OTP Error]:', err);
     res.status(500).json({ success: false, message: err.message });
@@ -265,45 +126,20 @@ app.post(['/api/auth/verify-otp', '/auth/verify-otp'], (req, res) => {
   }
 });
 
-// HTTP Endpoints for Order Events & Email Notifications
-app.post('/api/orders/created', async (req, res) => {
-  try {
-    const { order, userEmail, plantEmail, userFactory } = req.body;
-    if (!order) return res.status(400).json({ success: false, message: 'Missing order data' });
+// The Express development server delegates order email operations to the same
+// implementations used by Vercel serverless routes.
+app.all(['/api/orders/created', '/orders/created'], (req, res) => orderCreatedHandler(req, res));
+app.all(['/api/orders/status-updated', '/orders/status-updated'], (req, res) => orderStatusUpdatedHandler(req, res));
+app.all('/api/orders/action', (req, res) => orderActionHandler(req, res));
 
-    console.log(`[Order API] Triggering OrderCreated for Order ID: ${order.id}`);
-    orderEventEmitter.emit('OrderCreated', { order, userEmail, plantEmail, userFactory });
+// HTTP order endpoints above use the same shared handlers as Vercel.
 
-    const sheetRes = await syncOrderToSheet(order);
-
-    res.json({ success: true, message: 'Order created notifications queued & synced to Google Sheet', sheetSync: sheetRes });
-  } catch (err) {
-    console.error('[Order API Error]:', err);
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-app.post('/api/orders/status-updated', async (req, res) => {
-  try {
-    const { order, item, status, performerUsername } = req.body;
-    if (!order) return res.status(400).json({ success: false, message: 'Missing order data' });
-
-    console.log(`[Order API] Triggering OrderStatusUpdated for Order ID: ${order.id}`);
-    orderEventEmitter.emit('OrderStatusUpdated', { order, item, status, performerUsername });
-
-    const sheetRes = await syncOrderToSheet(order);
-
-    res.json({ success: true, message: 'Order status update queued & synced to Google Sheet', sheetSync: sheetRes });
-  } catch (err) {
-    console.error('[Order Status API Error]:', err);
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
+/* Removed duplicate inline order-action implementation; the canonical route is registered above.
 // ─── Email Action Webhook (Approve / Reject from email button) ──────────────
 // Plant users click the button in their requisition email and this endpoint
 // displays a confirmation page before processing the order.
 app.get('/api/orders/action', async (req, res) => {
+  return orderActionHandler(req, res);
   const { orderId, action, token } = req.query;
   const actionLabel = (action || '').toLowerCase();
   const appUrl = process.env.VITE_APP_URL || process.env.APP_URL || 'https://spareshare-33986.web.app';
@@ -342,6 +178,7 @@ app.get('/api/orders/action', async (req, res) => {
 });
 
 app.post('/api/orders/action', async (req, res) => {
+  return orderActionHandler(req, res);
   const payload = { ...req.query, ...(req.body || {}) };
   const orderId = payload.orderId;
   const action = String(payload.action || '').toLowerCase();
@@ -375,7 +212,7 @@ app.post('/api/orders/action', async (req, res) => {
 
     const orderData = orderSnap.data();
     if (orderData.status && orderData.status !== 'pending') {
-      return res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Already Processed</title></head><body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;"><div style="max-width:500px;margin:0 auto;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:36px;"><h2 style="color:#f59e0b;margin:0 0 12px;">⚠ Already Processed</h2><p style="color:#94a3b8;">Order <strong style="color:#fff;">${escapeHtml(String(orderId))}</strong> has already been <strong style="color:#f59e0b;">${escapeHtml(String(orderData.status).toUpperCase())}</strong>.</p><a href="${appUrl}" style="display:inline-block;margin-top:20px;padding:10px 22px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Open Portal</a></div></body></html>`);
+      return res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Already Processed</title></head><body style="margin:0;padding:40px;background:#0b1120;font-family:Arial,sans-serif;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;"><div style="max-width:500px;margin:0 auto;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:36px;"><h2 style="color:#f59e0b;margin:0 0 12px;">⚠ Already Processed</h2><p style="color:#94a3b8;">Order <strong style="color:#fff;">${escapeHtml(String(orderId))}</strong> has already been <strong style="color:#f59e0b;">${escapeHtml(String(orderData.status).toUpperCase())}</strong>.</p><a href="${appUrl}" style="display:inline-block;margin-top:20px;padding:10px 22px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Open Portal</a></div></body></html>`);
     }
 
     const updatedItems = (orderData.items || []).map(item => item.status === 'pending' ? { ...item, status: newStatus } : item);
@@ -388,41 +225,19 @@ app.post('/api/orders/action', async (req, res) => {
 
     const requesterEmail = orderData.userEmail || orderData.requestedBy;
     if (requesterEmail && requesterEmail.includes('@')) {
-      const { generateOrderStatusUpdateEmail } = await import('./emailQueue.js');
-      const mailOpts = {
-        from: process.env.SMTP_FROM || 'SpareShare Enterprise Portal <sparevone@gmail.com>',
+      await sendTransactionalEmail({
+        from: process.env.SMTP_FROM,
         to: requesterEmail,
         subject: `Order ${newStatus.toUpperCase()} - Ref: ${orderId}`,
         text: `Hello,\n\nYour order ${orderId} has been ${newStatus}.`,
-        html: generateOrderStatusUpdateEmail(orderData, orderData.items[0], newStatus, 'Plant Manager')
-      };
-      emailQueue.addJob(mailOpts);
+        html: `<p>Your order ${escapeHtml(orderId)} has been ${escapeHtml(newStatus)}.</p>`
+      }).catch(error => console.warn('[Email Action] Requester notification failed:', error.message));
     }
 
     return res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Order ${actionDisplay}</title></head><body style="margin:0;padding:40px 20px;background:#0b1120;font-family:Arial,sans-serif;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;"><div style="max-width:520px;width:100%;background:#0f172a;border:1px solid ${actionColor}55;border-radius:16px;padding:40px 36px;box-shadow:0 20px 40px rgba(0,0,0,0.4);text-align:center;"><div style="font-size:52px;margin-bottom:16px;">${action === 'approve' ? '✅' : '❌'}</div><h1 style="margin:0 0 8px;font-size:24px;font-weight:700;color:${actionColor};">Order ${actionDisplay}</h1><p style="margin:0 0 24px;color:#94a3b8;font-size:15px;line-height:1.6;">The spare part requisition order has been <strong style="color:${actionColor};">${newStatus}</strong> successfully.</p><a href="${appUrl}" target="_blank" style="display:inline-block;padding:12px 28px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:14px;letter-spacing:0.03em;">Open SpareShare Portal →</a><p style="margin-top:20px;font-size:11px;color:#475569;">SpareShare Enterprise Portal · sparevone@gmail.com</p></div></body></html>`);
   } catch (error) {
     console.error('[Email Action Webhook Error]:', error);
     return res.status(500).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head><body style="margin:0;padding:40px;background:#0b1120;font-family:sans-serif;color:#e2e8f0;text-align:center;"><div style="max-width:500px;margin:0 auto;background:#0f172a;border:1px solid #7f1d1d;border-radius:12px;padding:36px;"><h2 style="color:#ef4444;">Processing Error</h2><p style="color:#94a3b8;">${escapeHtml(error.message)}</p></div></body></html>`);
-  }
-});
-
-app.post(['/api/send-email', '/send-email'], (req, res) => {
-  try {
-    const { to, subject, text, html } = req.body;
-    if (!to || !subject) return res.status(400).json({ success: false, message: 'Missing required parameters (to, subject)' });
-
-    const mailOptions = {
-      from: process.env.SMTP_FROM || '"SpareShare Operations" <sparevone@gmail.com>',
-      to,
-      subject,
-      text: text || '',
-      html
-    };
-
-    const job = emailQueue.addJob(mailOptions);
-    res.json({ success: true, jobId: job.id, message: `Email queued for ${to}` });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
   }
 });
 
@@ -954,43 +769,6 @@ app.post(['/import-history', '/api/import-history'], upload.single('file'), asyn
 
 
 
-app.post(['/send-email', '/api/send-email'], async (req, res) => {
-  const { to, subject, text, html } = req.body;
-  if (!to || !subject || (!text && !html)) {
-    return res.status(400).send('Missing to, subject, or message body');
-  }
-
-  const mailOptions = {
-    from: process.env.SMTP_FROM || '"SpareShare Portal" <sparevone@gmail.com>',
-    to,
-    subject,
-    text,
-    html
-  };
-
-  try {
-    if (isMockEmail) {
-      console.log('\n================= MOCK EMAIL SENT =================');
-      console.log(`To: ${to}`);
-      console.log(`Subject: ${subject}`);
-      console.log(`Body (Text):\n${text || 'N/A'}`);
-      if (html) {
-        console.log(`Body (HTML):\n${html}`);
-      }
-      console.log('===================================================\n');
-      console.log("Order confirmation email sent successfully to:", to);
-      return res.json({ success: true, mock: true, message: 'Mock email logged to console successfully' });
-    }
-
-    const info = await transporter.sendMail(mailOptions);
-    console.log("Order confirmation email sent successfully to:", to);
-    res.json({ success: true, messageId: info.messageId });
-  } catch (emailErr) {
-    console.error("FAILED TO SEND ORDER EMAIL:", emailErr);
-    res.status(500).send(`Failed to send email: ${emailErr.message}`);
-  }
-});
-
 // REST API for inventory soft delete
 app.delete(['/api/inventory/:id'], async (req, res) => {
   const partId = req.params.id;
@@ -1303,29 +1081,6 @@ app.post(['/api/history/revert', '/api/audit/rollback', '/api/inventory/revert']
   } catch (error) {
     console.error("Revert API Error:", error);
     res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.post(['/orders/created', '/api/orders/created'], async (req, res) => {
-  const { order, userEmail, plantEmail, userFactory } = req.body;
-  if (!order || !userEmail || !plantEmail) {
-    return res.status(400).send('Missing order payload, userEmail, or plantEmail');
-  }
-
-  try {
-    console.log(`[API] Received OrderCreated event notification for order ${order.id}. Emitting event...`);
-    
-    // Emit the OrderCreated event to trigger listeners and queue tasks in the background
-    orderEventEmitter.emit('OrderCreated', { order, userEmail, plantEmail, userFactory });
-
-    // Respond immediately to prevent API latency during order placement
-    res.status(202).json({
-      success: true,
-      message: 'Order processing and notification emails triggered in background.'
-    });
-  } catch (error) {
-    console.error(`[API] Error triggering OrderCreated event:`, error);
-    res.status(500).send(`Failed to process order event: ${error.message}`);
   }
 });
 
@@ -1854,7 +1609,7 @@ function parseSAP_LT_Server(workbook, plantId) {
     ? findColIdxServer(headers, 'Base Unit of Measure', 'UoM', 'Unit of Measure', 'UOM') : 4;
   const qtyIdx    = findColIdxServer(headers, 'Sum of Unrestricted', 'Unrestricted', 'Qty on Hand', 'Stock Qty', 'Quantity', 'Qty') !== -1
     ? findColIdxServer(headers, 'Sum of Unrestricted', 'Unrestricted', 'Qty on Hand', 'Stock Qty', 'Quantity', 'Qty') : 5;
-  const valIdx    = findColIdxServer(headers, 'Value (LKR)', 'Value', 'Total Value');
+  const valIdx    = findColIdxServer(headers, 'Value (LKR)', 'Value', 'Total Value', 'Value');
 
   const now = Date.now();
   const rows = [];
@@ -1943,7 +1698,7 @@ function parseSAP_LWT_Server(workbook, plantId) {
     const qty      = toFloatServer(row[stockIdx]);
     const uom      = normalizeUOMServer(String(row[bunIdx] ?? ''));
     const unitCost = colRate !== -1 ? toFloatServer(row[rateIdx]) : null;
-    const totVal   = colValue !== -1 ? toFloatServer(row[valueIdx]) : null;
+    const totVal   = colValue !== -1 ? toFloatServer(row[valIdx]) : null;
 
     rows.push({
       plant_id:        plantId,
@@ -1981,7 +1736,7 @@ function parseOracle_RCLH_Server(workbook, plantId) {
   const colSub  = findColIdxServer(headers, 'Sub', 'Item Category', 'Category');
   const colDesc = findColIdxServer(headers, 'Item Description', 'Description', 'Material Description');
   const colQty  = findColIdxServer(headers, 'Qty', 'Qty on Hand', 'Quantity');
-  const colUOM  = findColIdxServer(headers, 'UOM', 'Primary Unit Of Measure', 'Unit of Measure');
+  const colUOM  = findColIdxServer(headers, 'UOM', 'Primary Unit Of Measure', 'Unit of Measure', 'UoM');
   const colCost = findColIdxServer(headers, 'Unit Cost', 'Cost');
   const colVal  = findColIdxServer(headers, 'Value', 'Value (LKR)', 'Inventory Value', 'Total Value');
 
@@ -2001,21 +1756,24 @@ function parseOracle_RCLH_Server(workbook, plantId) {
     const row = rawRows[i];
     if (!row || row.length === 0) { skipped++; continue; }
 
-    const rawCode = String(row[codeIdx] ?? '').trim();
+    const rawCode = colCode !== -1 ? String(row[colCode] ?? '').trim() : '';
     if (isInvalidItemCodeServer(rawCode)) {
       skipped++;
       continue;
     }
 
-    const category  = subIdx !== -1 ? (String(row[subIdx] ?? '').trim() || null) : null;
-    const desc      = String(row[descIdx] ?? '').trim() || 'No Description';
-    const qty       = toFloatServer(row[qtyIdx]);
-    const uom       = normalizeUOMServer(String(row[uomIdx] ?? ''));
-    const unitCost  = costIdx !== -1 ? toFloatServer(row[costIdx]) : null;
-    const totVal    = valIdx !== -1 ? toFloatServer(row[valIdx]) : null;
+    const orgRaw        = colOrg !== -1 ? String(row[colOrg] ?? '').trim() : '';
+    const resolvedPlant = resolvePlantIdServer(orgRaw, plantId);
+
+    const category  = colCat  !== -1 ? (String(row[colCat]  ?? '').trim() || null) : null;
+    const desc      = colDesc !== -1 ? (String(row[colDesc] ?? '').trim() || 'No Description') : 'No Description';
+    const uom       = normalizeUOMServer(colUOM !== -1 ? String(row[colUOM] ?? '') : '');
+    const qty       = toFloatServer(colQty !== -1 ? row[colQty] : 0);
+    const unitCost  = colCost !== -1 ? toFloatServer(row[colCost]) : null;
+    const totVal    = colVal  !== -1 ? toFloatServer(row[colVal])  : null;
 
     rows.push({
-      plant_id:        plantId,
+      plant_id:        resolvedPlant,
       item_code:       rawCode,
       description:     desc,
       category,

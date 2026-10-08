@@ -2,6 +2,10 @@ import crypto from 'crypto';
 
 export const ACTION_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+export function isActionNonceConsumed(consumedNonces, nonce) {
+  return Array.isArray(consumedNonces) && consumedNonces.includes(nonce);
+}
+
 function encodePayload(payload) {
   return Buffer.from(JSON.stringify(payload)).toString('base64url');
 }
@@ -11,7 +15,7 @@ function decodePayload(tokenPart) {
 }
 
 export function createSignedActionUrl(orderId, action, baseUrl = process.env.APP_URL || 'http://localhost:3000', secret = process.env.ACTION_SECRET, ttlMs = ACTION_TOKEN_TTL_MS) {
-  if (!orderId || !action) {
+  if (!orderId || !['approve', 'reject'].includes(action)) {
     throw new Error('Order ID and action are required for the action URL.');
   }
   if (!secret) {
@@ -19,7 +23,7 @@ export function createSignedActionUrl(orderId, action, baseUrl = process.env.APP
   }
 
   const expiry = Date.now() + ttlMs;
-  const payload = { orderId, action, exp: expiry };
+  const payload = { orderId: String(orderId), action, exp: expiry, nonce: crypto.randomUUID() };
   const encodedPayload = encodePayload(payload);
   const signature = crypto.createHmac('sha256', secret).update(encodedPayload).digest('hex');
   const token = `${encodedPayload}.${signature}`;
@@ -43,12 +47,14 @@ export function verifySignedActionToken(token, secret) {
   const [payloadPart, signature] = parts;
   const expectedSignature = crypto.createHmac('sha256', secret).update(payloadPart).digest('hex');
 
-  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+  const actual = Buffer.from(signature);
+  const expected = Buffer.from(expectedSignature);
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
     throw new Error('Invalid action token signature.');
   }
 
   const payload = decodePayload(payloadPart);
-  if (!payload || !payload.orderId || !payload.action) {
+  if (!payload || !payload.orderId || !['approve', 'reject'].includes(payload.action) || !payload.nonce) {
     throw new Error('Malformed action token payload.');
   }
 

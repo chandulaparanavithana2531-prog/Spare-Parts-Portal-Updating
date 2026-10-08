@@ -85,6 +85,7 @@ export interface OrderItem {
   partNumber: string; // Snapshot
   machine: string; // Snapshot
   fromFactory: string;
+  imageUrl?: string;
   quantity: number;
   unitCost: number;
   totalValue: number;
@@ -98,6 +99,11 @@ export interface Order {
   requestedBy: string; // username
   userEmail?: string;  // Explicitly included email address
   plantEmail?: string; // Plant manager/operations email address
+  userFactory?: string;
+  notes?: string;
+  emailStatus?: 'sent' | 'failed' | 'no_recipients';
+  emailStatusReason?: string | null;
+  emailStatusUpdatedAt?: number;
   status: OrderStatus;
   createdAt: number;
   approvedAt?: number;
